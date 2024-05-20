@@ -1,130 +1,273 @@
+// Provides core container components such as AbstractContainer Container interface
+// Also provides basic containers such as Box, HStack, VStack, ZStack
 package fwsui
 
 import proto "github.com/Nekhaevalex/fwsprotocol"
 
-type Container interface {
-	getChildrenGestures(x, y int) []GestureDescriptor
+// Represents abstract container and it's key attributes such as position, sizes
+// (inherited from AbstractView), gravity, child.
+// Since each container is view it's inherited from AbstractView.
+//
+// First element that is special to containers is Gravity - they describe how
+// child element should be aligned horizontaly and vericaly.
+// Second special element is children - it stores contained views.
+//
+// Since each container must implement View interface it is possible to store
+// containers inside containers.
+//
+// Note: AbstractContainer itself implements Container interface but not View.
+type AbstractContainer struct {
+	AbstractView
+	gravity  Gravity
+	children []View
 }
 
-type _Box struct {
-	x, y, width, height int
-	awidth, aheight     int
-	gravityX            Align
-	gravityY            Align
-	child               View
-}
-
-func Box(child View) *_Box {
-	box := new(_Box)
-	box.child = child
-	box.gravityX = Center
-	box.gravityY = Center
-	box.width, box.height = child.getLogicalSize()
-	return box
-}
-
-func (box *_Box) getLogicalSize() (int, int) {
-	return box.width, box.height
-}
-
-func (box *_Box) getActualSize() (int, int) {
-	return box.awidth, box.aheight
-}
-
-func (box *_Box) getGesture() Gesture {
-	return nil
-}
-
-func (box *_Box) hasGesture() bool {
-	return false
-}
-
-func (box *_Box) getPos() (int, int) {
-	return box.x, box.y
-}
-
-func (box *_Box) setPos(x, y int) {
-	box.x = x
-	box.y = y
-}
-
-func (box *_Box) render(width, height int) [][]proto.Cell {
-	box.awidth = width
-	box.aheight = height
-	// Allocating canvas
-	canvas := allocateCanvas(width, height)
-	// Check if child view has floating size
-	floating_x, floating_y := viewSizeFloating(box.child)
-	c_size_x, c_size_y := box.child.getLogicalSize()
-	// // Set new box size (from render directive arguments)
-	// box.width = width
-	// box.height = height
-
-	// assign child sizes
-	if floating_x {
-		c_size_x = width
-	}
-
-	if floating_y {
-		c_size_y = height
-	}
-
-	// Calculate shifts from gravity parameters
-	var shift_x int
-	var shift_y int
-	switch box.gravityX {
-	case Left:
-		shift_x = 0
-	case Right:
-		shift_x = width - c_size_x
-	case Center:
-		shift_x = width/2 - c_size_x/2
-	}
-	switch box.gravityY {
-	case Left:
-		shift_y = 0
-	case Right:
-		shift_y = height - c_size_y
-	case Center:
-		shift_y = height/2 - c_size_y/2
-	}
-
-	// Calculate drawing start position
-	start_x := max(0, shift_x)
-	start_y := max(0, shift_y)
-	last_x := min(width, shift_x+c_size_x)
-	lasy_y := min(height, shift_y+c_size_y)
-	box.child.setPos(start_x+box.x, start_y+box.y)
-	child_canvas := box.child.render(c_size_x, c_size_y)
-	for x := start_x; x < last_x; x++ {
-		for y := start_y; y < lasy_y; y++ {
-			canvas[x][y] = child_canvas[abs(x-shift_x)][abs(y-shift_y)]
+// Recursively gets GestureDescriptor of child view for mapping child elements gestures.
+// It is required for building map of active areas.
+func (ac AbstractContainer) GetChildrenGestures() []GestureDescriptor {
+	// allocating descriptor storage
+	descriptors := make([]GestureDescriptor, 0, 1)
+	for _, child := range ac.children {
+		// each child is view and implements HasGesture method.
+		if child.HasGesture() {
+			childDescriptor := child.GetGesture().GetGestureDescriptor()
+			childDescriptor.Position.Translate(Vector(ac.position))
+			descriptors = append(descriptors, childDescriptor)
+		}
+		// Trying assert and if child is container - recursive call GetChildrenGestures
+		if asserted, ok := child.(Container); ok {
+			descriptors = append(descriptors, asserted.GetChildrenGestures()...)
 		}
 	}
-	return canvas
+	return descriptors
 }
 
-func (box *_Box) SetSize(width, height int) *_Box {
-	box.width = -1
-	box.height = -1
+// Sets gravity for AbstractContainer object
+func (ac *AbstractContainer) SetGravity(gravity Gravity) {
+	ac.gravity = gravity
+}
+
+// Gets gravity of AbstractContainer object
+func (ac *AbstractContainer) GetGravity() Gravity {
+	return ac.gravity
+}
+
+// Applies specified AbstractContainer gravity to children which are containters.
+func (ac AbstractContainer) ApplyChildGravity() {
+	for _, child := range ac.children {
+		if asserted, ok := child.(Container); ok {
+			asserted.SetGravity(ac.gravity)
+		}
+	}
+}
+
+// Container - interface for implementing containers.
+// Each container must provide several methods.
+//
+// Since each container should contain gravity variable (see AbstractContainer),
+// Container should implement setter and getter.
+//
+// Each of View in Container may contain Gesture. Thats why active areas of
+// gestures must be mapped for quick gesture position identification.
+// Hence container must implement GetChildrenGestures which recursively map gestures.
+type Container interface {
+	GetChildrenGestures() []GestureDescriptor // Recursively gets GestureDescriptor of child view for mapping child elements gestures.
+	GetGravity() Gravity
+	SetGravity(gravity Gravity)
+}
+
+// Represents Box object with single child.
+// Since box can be larger then child, child can be aligned to different sides.
+type BoxObject struct {
+	AbstractContainer
+}
+
+// Represents Box object with single child.
+// Since box can be larger then child, child can be aligned to different sides.
+// By default size is infinite.
+// Default gravity is (Center, Center)
+func Box(child View) *BoxObject {
+	box := new(BoxObject)
+	box.children = make([]View, 1)
+	box.children = append(box.children, child)
+	box.SetPosition(Point{0, 0})
+	box.SetMinSize(Size{0, 0})
+	box.SetMaxSize(Size{Infinite, Infinite})
+	box.SetGesture(nil)
+	box.SetGravity(Gravity{Center, Center})
 	return box
 }
 
-func (box *_Box) Gravity(x, y Align) *_Box {
-	box.gravityX = x
-	box.gravityY = y
+// Solves child's size constraints when Box actual size is already known but
+// child's size still can float.
+// Returns child's estimated size.
+func (box BoxObject) solveConstraintsSize() Size {
+	// Alias to child
+	child := box.children[0]
+
+	// Solve 1D problem
+	solveOnAxis := func(axis Axis) uint {
+		actualSize := box.GetActualSize().GetComponent(axis)
+		childMinSize := child.GetMinSize().GetComponent(axis)
+		childMaxSize := child.GetMaxSize().GetComponent(axis)
+		if childMinSize <= actualSize && childMaxSize <= actualSize {
+			return childMaxSize
+		} else if childMinSize <= actualSize && actualSize <= childMaxSize {
+			return actualSize
+		} else if childMinSize >= actualSize && childMaxSize > actualSize {
+			return childMinSize
+		} else {
+			return childMinSize
+		}
+	}
+
+	// Returns on 2 axis
+	return Size{solveOnAxis(X), solveOnAxis(Y)}
+}
+
+// Solves starting position according to solved size (with solveConstraintsSize),
+// and gravity.
+func (box BoxObject) solveConstraintsPosition() Point {
+	// Alias to child
+	child := box.children[0]
+	// Solve 1D problem
+	solveOnAxis := func(axis Axis) int {
+		// Coordinate of frame end (xStart + size)
+		cEnd := box.position.GetComponent(axis) + int(box.actualSize.GetComponent(axis))
+		// Coordinate of frame center (xStart + size / 2)
+		cMiddle := box.position.GetComponent(axis) + int(box.actualSize.GetComponent(axis))/2
+		switch box.gravity.GetComponent(axis).TransformAlignment() {
+		case Left:
+			// xStart
+			return box.position.GetComponent(axis)
+		case Center:
+			// xCenter - childSize / 2
+			return cMiddle - int(child.GetActualSize().GetComponent(axis))/2
+		case Right:
+			// xEnd - childSize
+			return cEnd - int(child.GetActualSize().GetComponent(axis))
+		default:
+			return 0
+		}
+	}
+
+	return Point{solveOnAxis(X), solveOnAxis(Y)}
+}
+
+// Renders box and it's child
+func (box *BoxObject) Render() (Canvas, error) {
+	// Allocating canvas
+	canvas, error := AllocateCanvas(box.GetActualSize())
+	if error != nil {
+		return nil, error
+	}
+	// Alias child
+	child := box.children[0]
+	// Solve and apply child size
+	child.SetActualSize(box.solveConstraintsSize())
+	// Solve child position
+	child.SetPosition(box.solveConstraintsPosition())
+	// Get child's rendered canvas
+	childCanvas, childError := child.Render()
+	if childError != nil {
+		return nil, childError
+	}
+	// Calculate drawing start position
+	// Get frames of objects
+	boxFrame := box.GetFrame()
+	childFrame := child.GetFrame()
+	// Cut child frame
+	cuttedChildFrame := childFrame.Cut(*boxFrame) // In box coordinates
+	startX, endX := cuttedChildFrame.GetStartEnd(X)
+	startY, endY := cuttedChildFrame.GetStartEnd(Y)
+
+	for x := startX; x < endX; x++ {
+		for y := startY; y < endY; y++ {
+			canvas[x][y] = childCanvas[x-child.GetPosition().X][y-child.GetPosition().Y]
+		}
+	}
+	return canvas, nil
+}
+
+// Set size
+func (box *BoxObject) Size(size Size) *BoxObject {
+	box.SetSize(size)
 	return box
 }
 
-func (box *_Box) getChildrenGestures(x, y int) []GestureDescriptor {
-	actors := make([]GestureDescriptor, 0, 1)
-	if box.child.hasGesture() {
-		actors = append(actors, box.child.getGesture().getGestureDescriptor(0, 0))
+// Set min size
+func (box *BoxObject) MinSize(size Size) *BoxObject {
+	box.SetMinSize(size)
+	return box
+}
+
+// Set max size
+func (box *BoxObject) MaxSize(size Size) *BoxObject {
+	box.SetMaxSize(size)
+	return box
+}
+
+// Set gravity
+func (box *BoxObject) Gravity(gravity Gravity) *BoxObject {
+	box.SetGravity(gravity)
+	return box
+}
+
+// Represents unviersal stack object
+type AbstractStackObject struct {
+	AbstractContainer
+	axis    Axis
+	padding int
+}
+
+func AbstractStack(axis Axis, children ...View) *AbstractStackObject {
+	stack := new(AbstractStackObject)
+	stack.children = children
+	stack.SetPosition(Point{0, 0})
+	stack.SetMinSize(Size{0, 0})
+	stack.SetMaxSize(Size{Infinite, Infinite})
+	stack.SetGesture(nil)
+	stack.SetGravity(Gravity{Center, Center})
+	stack.padding = 0
+	return stack
+}
+
+// Set size
+func (stack *AbstractStackObject) Size(size Size) *AbstractStackObject {
+	stack.SetSize(size)
+	return stack
+}
+
+// Set min size
+func (stack *AbstractStackObject) MinSize(size Size) *AbstractStackObject {
+	stack.SetMinSize(size)
+	return stack
+}
+
+// Set max size
+func (stack *AbstractStackObject) MaxSize(size Size) *AbstractStackObject {
+	stack.SetMaxSize(size)
+	return stack
+}
+
+// Set padding
+func (stack *AbstractStackObject) Padding(paddint int) *AbstractStackObject {
+	stack.padding = paddint
+	return stack
+}
+
+// Set gravity
+func (stack *AbstractStackObject) Gravity(gravity Gravity) *AbstractStackObject {
+	stack.SetGravity(gravity)
+	return stack
+}
+
+func (stack *AbstractStackObject) Render() (Canvas, error) {
+	canvas, error := AllocateCanvas(stack.GetActualSize())
+	if error != nil {
+		return nil, error
 	}
-	if asserted, ok := box.child.(Container); ok {
-		actors = append(actors, asserted.getChildrenGestures(box.x, box.y)...)
-	}
-	return actors
+
 }
 
 type _HStack struct {

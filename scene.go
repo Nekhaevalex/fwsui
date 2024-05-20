@@ -32,7 +32,7 @@ type _Window struct {
 	lastX, lastY        int
 	lastW, lastH        int
 	onCloseFunc         func()
-	titleText           *_Text
+	titleText           *TextObject
 }
 
 func (window *_Window) Close() {
@@ -146,13 +146,13 @@ func (window *_Window) buildContent() {
 
 	windowFrame := VStack(
 		HStack(
-			Button("X", func(outlet *_Button) {
+			Button("X", func(outlet *ButtonObject) {
 				window.Close()
 			}).Foreground(White).Background(Red),
-			Button("-", func(outlet *_Button) {
+			Button("-", func(outlet *ButtonObject) {
 				// Todo
 			}).Foreground(Grey).Background(Yellow),
-			Button("+", func(outlet *_Button) {
+			Button("+", func(outlet *ButtonObject) {
 				// Todo
 			}).Foreground(White).Background(Green),
 			window.titleText,

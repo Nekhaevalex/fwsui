@@ -7,14 +7,15 @@ import (
 )
 
 type GestureDescriptor struct {
-	x, y, width, height int
-	pointer             Gesture
+	Position Point
+	Size     Size
+	Pointer  Gesture
 }
 
 // Gesture – interface used for implementing interactive elements like
 // buttons, drag areas, etc.
 type Gesture interface {
-	getGestureDescriptor(x, y int) GestureDescriptor
+	GetGestureDescriptor() GestureDescriptor
 	setParentViewSizes(v View)
 	updating(event *proto.EventRequest)
 	onChanged()

@@ -8,14 +8,6 @@ import (
 
 // Some useful local functions
 
-func allocateCanvas(width, height int) [][]proto.Cell {
-	canvas := make([][]proto.Cell, width)
-	for i := 0; i < width; i++ {
-		canvas[i] = make([]proto.Cell, height)
-	}
-	return canvas
-}
-
 func viewSizeFloating(v View) (bool, bool) {
 	size_x, size_y := v.getLogicalSize()
 	can_x, can_y := false, false
@@ -57,25 +49,6 @@ func pointInArea(x, y int, area GestureDescriptor) bool {
 	}
 	return false
 }
-
-// Some popular colors
-
-var White = proto.Color{A: 255, R: 255, G: 255, B: 255}
-var Black = proto.Color{A: 255, R: 0, G: 0, B: 0}
-var Red = proto.Color{A: 255, R: 255, G: 0, B: 0}
-var Grey = proto.Color{A: 255, R: 127, G: 127, B: 127}
-var LightGrey = proto.Color{A: 255, R: 192, G: 192, B: 192}
-var Yellow = proto.Color{A: 255, R: 255, G: 255, B: 0}
-var Green = proto.Color{A: 255, R: 0, G: 255, B: 0}
-var Blue = proto.Color{A: 255, R: 0, G: 0, B: 255}
-
-type Align uint8
-
-const (
-	Left Align = iota
-	Center
-	Right
-)
 
 type prevGesture struct {
 	key   termbox.Key

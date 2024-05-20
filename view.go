@@ -1,3 +1,8 @@
+// Provides core abstract buidling blocks for views:
+// AbstractView, View
+//
+// Also provides basic views:
+// Text, Spacer, Button, TextField
 package fwsui
 
 import (
@@ -8,99 +13,288 @@ import (
 	"github.com/nsf/termbox-go"
 )
 
+// Represents abstract view and it's key attributes such as poisition, minimal
+// possible size, maximal possible size, actual size.
+// FWS suggests universal structure of all views containing key attributes for
+// later constraint solving.
+// Each view structure must contain AbstractView via composition for providing
+// universal access to view attributes.
+//
+// MinSize and MaxSize will be used for constraing solving stage during which
+// inequalities like MinSize.Width <= width <= MaxSize.Width and
+// MinSize.Height <= height <= MaxSize.Height will be solves.
+// Results will be stored at ActualSize variable
+//
+// View naming convention: each new view must be names as <View>Object e.g.
+// Text will be called TextObject.
+// Each view must have constructor function names as <View> e.g.
+// Text constructor will be called Text()
+//
+// All getters and setters of AbstractView are public and named with upper case letter.
+// However setters do not return any value and though cannot be chained.
+// This is done due to Golang does not provide true inheritance.
+// It uses composition, so AbstractView instance will be returned.
+// If chaining needed please define new chaining method.
+type AbstractView struct {
+	position   Point   // Represents abstract view position in parent's coordinates. Assigned by parent object. Default always (0, 0)
+	minSize    Size    // Represents abstract view minimal size
+	maxSize    Size    // Represents abstract view maximal size
+	actualSize Size    // Represents abstract view actual size that will be assigned at constraint solving stage
+	gesture    Gesture // Gesture assigned to view
+}
+
+// Returns AbstractView position
+func (av AbstractView) GetPosition() Point {
+	return av.position
+}
+
+// Sets AbstractView position
+func (av *AbstractView) SetPosition(position Point) {
+	av.position = position
+}
+
+// Returns AbstractView minimal size
+func (av AbstractView) GetMinSize() Size {
+	return av.minSize
+}
+
+// Returns AbstractView maxinal size
+func (av AbstractView) GetMaxSize() Size {
+	return av.maxSize
+}
+
+// Returns AbstractView actual size
+func (av AbstractView) GetActualSize() Size {
+	return av.actualSize
+}
+
+func (av AbstractView) IsFixedSize() bool {
+	return av.minSize.IsEqual(av.maxSize)
+}
+
+// Sets AbstractView exact size (MinSize = MaxSize = size)
+func (av *AbstractView) SetSize(size Size) {
+	av.minSize = size
+	av.maxSize = size
+}
+
+// Sets AbstractView minimal size
+func (av *AbstractView) SetMinSize(size Size) {
+	av.minSize = size
+}
+
+// Sets AbstractView maximal size
+func (av *AbstractView) SetMaxSize(size Size) {
+	av.maxSize = size
+}
+
+// Sets AbstractView maximal size
+func (av *AbstractView) SetActualSize(size Size) {
+	av.actualSize = size
+}
+
+// Returns true if View contains binded Gesture
+func (av AbstractView) HasGesture() bool {
+	return !(av.gesture == nil)
+}
+
+// Returns AV's Gesture
+func (av AbstractView) GetGesture() Gesture {
+	return av.gesture
+}
+
+// Sets AV's Gesture
+func (av *AbstractView) SetGesture(gesture Gesture) {
+	av.gesture = gesture
+}
+
+// Returns AV's Frame representation
+func (av AbstractView) GetFrame() *Frame {
+	frame := new(Frame)
+	frame.UpperLeft = av.position
+	frame.SetSize(av.actualSize)
+	return frame
+}
+
+/******************************************************************************/
+
 // View – interface for implementing UI elements that can be rendered in scene.
 // Requires Render method that returns proto.Cell matrix of the element.
+// Each view must implement those methods
 type View interface {
-	getLogicalSize() (int, int)
-	getActualSize() (int, int)
-	getPos() (int, int)
-	setPos(x, y int)
-	render(width, height int) [][]proto.Cell
-	hasGesture() bool
-	getGesture() Gesture
+	// Position methods
+	GetPosition() Point         // Returns AbstractView position
+	SetPosition(position Point) // Sets AbstractView position
+
+	// Size methods
+	GetMinSize() Size    // Returns AbstractView minimal size
+	GetMaxSize() Size    // Returns AbstractView maxinal size
+	GetActualSize() Size // Returns AbstractView actual size
+	GetFrame() *Frame    // Returns Frame of AbstractView
+	IsFixedSize() bool   // Returns true if min size equal to max size (size is fixed)
+
+	SetSize(size Size)       // Sets AbstractView exact size (MinSize = MaxSize = size)
+	SetMinSize(size Size)    // Sets AbstractView minimal size
+	SetMaxSize(size Size)    // Sets AbstractView maximal size
+	SetActualSize(size Size) // Sets AbstractView actual size
+
+	// Gesture methods
+	HasGesture() bool    // Returns true if view have gesture
+	GetGesture() Gesture // Returns view's gesture
+
+	SetGesture(gesture Gesture) // Sets view's gesture
+
+	Render() (Canvas, error) // Renders view to canvas
 }
 
-type _Text struct {
-	// Position and value
-	x      int
-	y      int
-	width  int
-	height int
-	text   string
+/******************************************************************************/
+
+// Provides simple rectangle abstraction with specified size and color
+type RectangleObject struct {
+	AbstractView
+	color proto.Color
+}
+
+// Creates simple rectangle abstraction with specified size and color
+func Rectangle(size Size) *RectangleObject {
+	rect := new(RectangleObject)
+	rect.SetPosition(Point{0, 0})
+	rect.SetMinSize(size)
+	rect.SetGesture(nil)
+	return rect
+}
+
+// Sets rectangle color
+func (r *RectangleObject) Color(color proto.Color) *RectangleObject {
+	r.color = color
+	return r
+}
+
+// Sets rectangle position
+func (r *RectangleObject) Position(position Point) *RectangleObject {
+	r.SetPosition(position)
+	return r
+}
+
+// Sets rectangle size
+func (r *RectangleObject) Size(size Size) *RectangleObject {
+	r.SetSize(size)
+	return r
+}
+
+func (r *RectangleObject) MinSize(size Size) *RectangleObject {
+	r.SetMinSize(size)
+	return r
+}
+
+func (r *RectangleObject) MaxSize(size Size) *RectangleObject {
+	r.SetMaxSize(size)
+	return r
+}
+
+func (r RectangleObject) Render() (Canvas, error) {
+	canvas, error := AllocateCanvas(r.GetActualSize())
+	if error != nil {
+		return nil, error
+	}
+	for x := 0; x < int(r.GetActualSize().Width); x++ {
+		for y := 0; y < int(r.GetActualSize().Height); y++ {
+			canvas[x][y].Bg = r.color
+			canvas[x][y].Fg = r.color
+			canvas[x][y].Ch = ' '
+		}
+	}
+	return canvas, nil
+}
+
+/******************************************************************************/
+
+// Represents text object. Text object is single string with attributes applied
+// to all string and ability to bind gesture.
+type TextObject struct {
+	// AbstractView composition
+	AbstractView
+
+	// Text value
+	text string
+
 	// Attributes
-	align      Align
-	bold       bool
-	blink      bool
-	hidden     bool
-	dim        bool
-	underline  bool
-	cursive    bool
-	reverse    bool
+	align Align
+
+	bold      bool
+	blink     bool
+	hidden    bool
+	dim       bool
+	underline bool
+	cursive   bool
+	reverse   bool
+
 	foreground proto.Color
 	background proto.Color
-	// Gesture part
-	gestureFlag     bool
-	gesture         Gesture
-	awidth, aheight int // actual width & height
 }
 
-// getGesture implements View.
-func (text *_Text) getGesture() Gesture {
-	text.gesture.setParentViewSizes(text)
-	return text.gesture
-}
-
-func (text *_Text) Align(a Align) *_Text {
+// Sets alignment of text
+func (text *TextObject) Align(a Align) *TextObject {
 	text.align = a
 	return text
 }
 
-func (text *_Text) Bold(b bool) *_Text {
+// Sets if text is bold
+func (text *TextObject) Bold(b bool) *TextObject {
 	text.bold = b
 	return text
 }
 
-func (text *_Text) Blink(b bool) *_Text {
+// Sets if text is blinking
+func (text *TextObject) Blink(b bool) *TextObject {
 	text.blink = b
 	return text
 }
 
-func (text *_Text) Hidden(b bool) *_Text {
+// Sets if text is hidden
+func (text *TextObject) Hidden(b bool) *TextObject {
 	text.hidden = b
 	return text
 }
 
-func (text *_Text) Dim(b bool) *_Text {
+// Sets if text is dimmed
+func (text *TextObject) Dim(b bool) *TextObject {
 	text.dim = b
 	return text
 }
 
-func (text *_Text) Underline(b bool) *_Text {
+// Sets if text is underlined
+func (text *TextObject) Underline(b bool) *TextObject {
 	text.underline = b
 	return text
 }
 
-func (text *_Text) Cursive(b bool) *_Text {
+// Sets if text is cursive
+func (text *TextObject) Cursive(b bool) *TextObject {
 	text.cursive = b
 	return text
 }
 
-func (text *_Text) Reverse(b bool) *_Text {
+// Sets if text is reversed
+func (text *TextObject) Reverse(b bool) *TextObject {
 	text.reverse = b
 	return text
 }
 
-func (text *_Text) Foreground(c proto.Color) *_Text {
+// Sets foreground color
+func (text *TextObject) Foreground(c proto.Color) *TextObject {
 	text.foreground = c
 	return text
 }
 
-func (text *_Text) Background(c proto.Color) *_Text {
+// Sets background color
+func (text *TextObject) Background(c proto.Color) *TextObject {
 	text.background = c
 	return text
 }
 
-func (text *_Text) constructAttribute() proto.Attr {
+// Constructs attributes superposition
+func (text *TextObject) constructAttribute() proto.Attr {
 	var attr proto.Attr = 0
 	if text.bold {
 		attr = attr | proto.Attr(termbox.AttrBold)
@@ -123,47 +317,19 @@ func (text *_Text) constructAttribute() proto.Attr {
 	if text.reverse {
 		attr = attr | proto.Attr(termbox.AttrReverse)
 	}
+
 	return attr
 }
 
-func (text *_Text) SetSize(w, h int) *_Text {
-	text.width = w
-	text.height = h
-	return text
-}
-
-func (text *_Text) SetText(s string) *_Text {
-	text.text = s
-	text.width = utf8.RuneCountInString(s)
-	return text
-}
-
-func (text *_Text) getLogicalSize() (int, int) {
-	return text.width, text.height
-}
-
-func (text *_Text) getActualSize() (int, int) {
-	if text.width > 0 && text.height > 0 {
-		return text.getLogicalSize()
+// Renders text view to canvas
+func (text *TextObject) Render() (Canvas, error) {
+	canvas, error := AllocateCanvas(text.actualSize)
+	if error != nil {
+		return nil, error
 	}
-	return text.awidth, text.aheight
-}
-
-func (text *_Text) setPos(x, y int) {
-	text.x = x
-	text.y = y
-}
-
-func (text *_Text) getPos() (int, int) {
-	return text.x, text.y
-}
-
-func (text *_Text) render(width, height int) [][]proto.Cell {
-	text.awidth = width
-	text.aheight = height
-	canvas := allocateCanvas(width, height)
-	for x := 0; x < width; x++ {
-		for y := 0; y < height; y++ {
+	width, height := text.actualSize.Unpack()
+	for x := 0; x < int(width); x++ {
+		for y := 0; y < int(height); y++ {
 			canvas[x][y].Ch = rune(" "[0])
 			canvas[x][y].Fg = text.foreground
 			canvas[x][y].Bg = text.background
@@ -176,103 +342,147 @@ func (text *_Text) render(width, height int) [][]proto.Cell {
 	case Left:
 		start_x = 0
 	case Center:
-		start_x = width/2 - utf8.RuneCountInString(text.text)/2
+		start_x = int(width)/2 - utf8.RuneCountInString(text.text)/2
 	case Right:
-		start_x = width - utf8.RuneCountInString(text.text)
+		start_x = int(width) - utf8.RuneCountInString(text.text)
 	}
 
 	start_y := height / 2
-	for x := start_x; x < min(utf8.RuneCountInString(text.text)+start_x, width); x++ {
+	for x := start_x; x < min(utf8.RuneCountInString(text.text)+start_x, int(width)); x++ {
 		if x >= 0 {
 			canvas[x][start_y].Ch = []rune(text.text)[x-start_x]
 		}
 	}
 
-	return canvas
+	return canvas, nil
 }
 
-func (text *_Text) hasGesture() bool {
-	return text.gestureFlag
+// Chained wrapper of SetPosition
+func (to *TextObject) Position(position Point) *TextObject {
+	to.SetPosition(position)
+	return to
 }
 
-func (text *_Text) Gesture(gesture Gesture) *_Text {
-	text.gestureFlag = true
-	text.gesture = gesture
-	return text
+// Chained wrapper of SetSize
+func (to *TextObject) Size(size Size) *TextObject {
+	to.SetSize(size)
+	return to
 }
 
-func Text(s string) *_Text {
-	text := new(_Text)
+// Chained wrapper of SetMinSize
+func (to *TextObject) MinSize(size Size) *TextObject {
+	to.SetMinSize(size)
+	return to
+}
+
+// Chained wrapper of SetMaxSize
+func (to *TextObject) MaxSize(size Size) *TextObject {
+	to.SetMaxSize(size)
+	return to
+}
+
+// Chained wrapper of SetGesture
+func (to *TextObject) Gesture(gesture Gesture) *TextObject {
+	to.SetGesture(gesture)
+	return to
+}
+
+// Sets text value of existing TextObject.
+// Note: this is chained public method.
+func (to *TextObject) SetText(s string) *TextObject {
+	to.text = s
+	return to
+}
+
+// Creates text object. Text object is single string with attributes applied
+// to all string and ability to bind gesture.
+// Resulted object will contain provided string s with left alignment and empty
+// attributes.
+// Default position is (0, 0).
+// Default minimal size is (length(s), 1)
+// No default gesture provided.
+func Text(s string) *TextObject {
+	text := new(TextObject)
 	text.text = s
 	text.align = Left
-	text.x = 0
-	text.y = 0
-	text.width = utf8.RuneCountInString(s)
-	text.height = 1
-	text.gestureFlag = false
+	text.SetPosition(Point{0, 0})
+	text.SetMinSize(Size{uint(utf8.RuneCountInString(s)), 1})
+	text.SetGesture(nil)
 	return text
 }
 
-type _Spacer struct {
-	x, y, width, height int
+/******************************************************************************/
+
+// Represents Spacer - transparent area for filling space between other views
+type SpacerObject struct {
+	AbstractView
 }
 
-func (spacer *_Spacer) getLogicalSize() (int, int) {
-	return spacer.width, spacer.height
+func (spacer *SpacerObject) Render() (Canvas, error) {
+	return AllocateCanvas(spacer.actualSize)
 }
 
-func (spacer *_Spacer) getActualSize() (int, int) {
-	return spacer.width, spacer.height
+// Chained wrapper of SetPosition
+func (so *SpacerObject) Position(position Point) *SpacerObject {
+	so.SetPosition(position)
+	return so
 }
 
-func (spacer *_Spacer) setPos(x, y int) {
-	spacer.x = x
-	spacer.y = y
+// Chained wrapper of SetSize
+func (so *SpacerObject) Size(size Size) *SpacerObject {
+	so.SetSize(size)
+	return so
 }
 
-func (spacer *_Spacer) getPos() (int, int) {
-	return spacer.x, spacer.y
+// Chained wrapper of SetMinSize
+func (so *SpacerObject) MinSize(size Size) *SpacerObject {
+	so.SetMinSize(size)
+	return so
 }
 
-func (spacer *_Spacer) render(width, height int) [][]proto.Cell {
-	return allocateCanvas(width, height)
+// Chained wrapper of SetMaxSize
+func (so *SpacerObject) MaxSize(size Size) *SpacerObject {
+	so.SetMaxSize(size)
+	return so
 }
 
-func (spacer *_Spacer) SetSize(w, h int) *_Spacer {
-	spacer.width = w
-	spacer.height = h
+// Creates Spacer.
+// By default can grow as big as possible so default max width/height is infinite,
+// default min width/height is 0. No default Gesture provided.
+func Spacer() *SpacerObject {
+	spacer := new(SpacerObject)
+	spacer.SetMinSize(Size{0, 0})
+	spacer.SetMaxSize(Size{Infinite, Infinite})
 	return spacer
 }
 
-func (spacer *_Spacer) getGesture() Gesture {
-	return nil
-}
+/******************************************************************************/
 
-func (spacer *_Spacer) hasGesture() bool {
-	return false
-}
-
-func Spacer() *_Spacer {
-	spacer := new(_Spacer)
-	spacer.width = -1
-	spacer.height = -1
-	return spacer
-}
-
-type _Button struct {
-	_Text
-	action  func(outlet *_Button)
+// Represents Button object. Button is very similar to Text (even based on it)
+// with some predifined outlet and customizable action which will be executed on
+// click.
+type ButtonObject struct {
+	TextObject
+	action  func(outlet *ButtonObject)
 	pressed bool
 }
 
-func Button(s string, action func(outlet *_Button)) *_Button {
-	button := new(_Button)
+// Creates Button object. Button is very similar to Text (even based on it)
+// with some predifined outlet and customizable action which will be executed on
+// click.
+// It requires function 'action' with signature `func(outlet *ButtonObject)`
+// which can perform arbitrary actions and have access to button object as outlet.
+//
+// Default size is predifined as (length(s) + 2, 1).
+// Defualt font color is white and background is grey.
+//
+// Button has predefined Gesture that is not recomended to change.
+func Button(s string, action func(outlet *ButtonObject)) *ButtonObject {
+	button := new(ButtonObject)
 	button.text = s
 	button.align = Center
-	button.x = 0
-	button.y = 0
-	button.width = utf8.RuneCountInString(s) + 2
-	button.height = 1
+	button.SetPosition(Point{0, 0})
+	button.SetSize(Size{uint(utf8.RuneCountInString(s) + 2), 1})
 	button.action = action
 	button.foreground = White
 	button.background = Grey
@@ -327,7 +537,11 @@ func Button(s string, action func(outlet *_Button)) *_Button {
 	return button
 }
 
-type _TextField struct {
+/******************************************************************************/
+
+// Provides TextField object. This is basic editable text field based on TextObject.
+type TextFieldObject struct {
+	AbstractView
 	resultText  *string
 	input       chan *proto.EventRequest
 	prompt      string
@@ -335,14 +549,14 @@ type _TextField struct {
 	typeIndex   int
 	selectIndex int
 	onFinish    func()
-	label       _Text
+	label       TextObject
 }
 
-func (textfield *_TextField) enableInput() {
+func (textfield *TextFieldObject) enableInput() {
 	AppInstance().setInput(&textfield.input)
 }
 
-func (textfield *_TextField) insertString(s string) {
+func (textfield *TextFieldObject) insertString(s string) {
 	leftI := textfield.typeIndex
 	rightI := textfield.selectIndex
 	runeForm := []rune(*textfield.resultText)
@@ -352,7 +566,7 @@ func (textfield *_TextField) insertString(s string) {
 	textfield.selectIndex = textfield.typeIndex
 }
 
-func (textfield *_TextField) deletePartOfString() {
+func (textfield *TextFieldObject) deletePartOfString() {
 	leftI := textfield.typeIndex
 	rightI := textfield.selectIndex
 	if leftI != rightI {
@@ -377,7 +591,7 @@ func (textfield *_TextField) deletePartOfString() {
 	}
 }
 
-func (textfield *_TextField) handleEvent() {
+func (textfield *TextFieldObject) handleEvent() {
 	for textfield.active {
 		event := <-textfield.input
 		if event.Ch == 0 {
@@ -391,7 +605,7 @@ func (textfield *_TextField) handleEvent() {
 				textfield.deactivate()
 			case termbox.KeySpace:
 				textfield.insertString(" ")
-				textfield.label.SetText(*textfield.resultText).SetSize(-1, 1)
+				textfield.label.SetText(*textfield.resultText).SetSize(Size{Infinite, 1})
 			case termbox.KeyArrowLeft:
 				if event.Mod != termbox.ModAlt {
 					if textfield.selectIndex > 0 {
@@ -423,40 +637,40 @@ func (textfield *_TextField) handleEvent() {
 	}
 }
 
-func (textfield *_TextField) activate() {
+func (textfield *TextFieldObject) activate() {
 	textfield.active = true
 	if utf8.RuneCountInString(*textfield.resultText) == 0 {
-		textfield.label.Foreground(Black).SetText("").SetSize(-1, 1)
+		textfield.label.Foreground(Black).SetText("").SetSize(Size{Infinite, 1})
 	}
 	textfield.typeIndex = 0
 	textfield.selectIndex = 0
 	go textfield.handleEvent()
 }
 
-func (textfield *_TextField) updateLabelView() {
-	realWidth, _ := textfield.label.getActualSize()
-	if utf8.RuneCountInString(*textfield.resultText) > realWidth {
+func (textfield *TextFieldObject) updateLabelView() {
+	realWidth, _ := textfield.label.GetActualSize().Unpack()
+	if utf8.RuneCountInString(*textfield.resultText) > int(realWidth) {
 		runeForm := []rune(*textfield.resultText)[realWidth:]
-		textfield.label.SetText(string(runeForm)).SetSize(-1, 1)
+		textfield.label.SetText(string(runeForm)).SetSize(Size{Infinite, 1})
 	} else {
-		textfield.label.SetText(*textfield.resultText).SetSize(-1, 1)
+		textfield.label.SetText(*textfield.resultText).SetSize(Size{Infinite, 1})
 	}
 }
 
-func (textfield *_TextField) deactivate() {
+func (textfield *TextFieldObject) deactivate() {
 	textfield.active = false
 	if utf8.RuneCountInString(*textfield.resultText) == 0 {
-		textfield.label.SetText(textfield.prompt).Foreground(Grey).SetSize(-1, 1)
+		textfield.label.SetText(textfield.prompt).Foreground(Grey).SetSize(Size{Infinite, 1})
 	}
 }
 
-func (textfield *_TextField) OnFinish(action func()) *_TextField {
+func (textfield *TextFieldObject) OnFinish(action func()) *TextFieldObject {
 	textfield.onFinish = action
 	return textfield
 }
 
-func TextField(text *string, prompt string) *_TextField {
-	textfield := new(_TextField)
+func TextField(text *string, prompt string) *TextFieldObject {
+	textfield := new(TextFieldObject)
 	textfield.input = make(chan *proto.EventRequest)
 	textfield.label.Background(LightGrey)
 	textfield.label.Foreground(Grey)
@@ -464,11 +678,9 @@ func TextField(text *string, prompt string) *_TextField {
 	textfield.prompt = prompt
 	textfield.resultText = text
 	textfield.label.align = Left
-	textfield.label.x = 0
-	textfield.label.y = 0
-	textfield.label.width = -1
-	textfield.label.height = 1
-	textfield.label.gestureFlag = false
+	textfield.label.SetPosition(Point{0, 0})
+	textfield.label.SetSize(Size{Infinite, 1})
+	textfield.label.SetGesture(nil)
 	textfield.active = false
 	textfield.onFinish = func() {}
 
@@ -479,8 +691,8 @@ func TextField(text *string, prompt string) *_TextField {
 			textfield.enableInput()
 			go textfield.handleEvent()
 		}
-		sel1 := min(max(0, value.startLocationX-textfield.label.x), utf8.RuneCountInString(*textfield.resultText))
-		sel2 := min(max(0, value.locationX-textfield.label.x), utf8.RuneCountInString(*textfield.resultText))
+		sel1 := min(max(0, value.startLocationX-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
+		sel2 := min(max(0, value.locationX-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
 		textfield.typeIndex = min(sel1, sel2)
 		textfield.selectIndex = max(sel1, sel2)
 	}).OnEnded(func(value Value) {
@@ -490,20 +702,11 @@ func TextField(text *string, prompt string) *_TextField {
 	return textfield
 }
 
-func (textfield *_TextField) getLogicalSize() (int, int) {
-	return textfield.label.getLogicalSize()
-}
-func (textfield *_TextField) getActualSize() (int, int) {
-	return textfield.label.getActualSize()
-}
-func (textfield *_TextField) getPos() (int, int) {
-	return textfield.label.getPos()
-}
-func (textfield *_TextField) setPos(x, y int) {
-	textfield.label.setPos(x, y)
-}
-func (textfield *_TextField) render(width, height int) [][]proto.Cell {
-	renderedView := textfield.label.render(width, height)
+func (textfield *TextFieldObject) Render() (Canvas, error) {
+	renderedView, error := textfield.label.Render()
+	if error != nil {
+		return nil, error
+	}
 	if textfield.active {
 		if textfield.typeIndex != textfield.selectIndex {
 			for i := textfield.typeIndex; i < textfield.selectIndex; i++ {
@@ -514,11 +717,29 @@ func (textfield *_TextField) render(width, height int) [][]proto.Cell {
 			renderedView[textfield.typeIndex][0].Ch = []rune("|")[0]
 		}
 	}
-	return renderedView
+	return renderedView, nil
 }
-func (textfield *_TextField) hasGesture() bool {
-	return textfield.label.hasGesture()
+
+// Chained wrapper of SetPosition
+func (tfo *TextFieldObject) Position(position Point) *TextFieldObject {
+	tfo.SetPosition(position)
+	return tfo
 }
-func (textfield *_TextField) getGesture() Gesture {
-	return textfield.label.getGesture()
+
+// Chained wrapper of SetSize
+func (tfo *TextFieldObject) Size(size Size) *TextFieldObject {
+	tfo.SetSize(size)
+	return tfo
+}
+
+// Chained wrapper of SetMinSize
+func (tfo *TextFieldObject) MinSize(size Size) *TextFieldObject {
+	tfo.SetMinSize(size)
+	return tfo
+}
+
+// Chained wrapper of SetMaxSize
+func (tfo *TextFieldObject) MaxSize(size Size) *TextFieldObject {
+	tfo.SetMaxSize(size)
+	return tfo
 }

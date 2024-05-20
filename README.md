@@ -89,3 +89,67 @@ Gesture objects can be passed to Text object and do some specified action if tri
 
 ### KeyHandler
 Will be described later. Used for handling keyboard keys. Used only in TextField now.
+
+# Components Implementation Guide
+Below some basic rules of implementing custom elements provided.
+## Views
+Each view must implement `View` interface which contains following methods:
+```go
+type View interface {
+	// Position methods
+	GetPosition() Point         // Returns AbstractView position
+	SetPosition(position Point) // Sets AbstractView position
+
+	// Size methods
+	GetMinSize() Size    // Returns AbstractView minimal size
+	GetMaxSize() Size    // Returns AbstractView maxinal size
+	GetActualSize() Size // Returns AbstractView actual size
+
+	SetSize(size Size)       // Sets AbstractView exact size (MinSize = MaxSize = size)
+	SetMinSize(size Size)    // Sets AbstractView minimal size
+	SetMaxSize(size Size)    // Sets AbstractView maximal size
+	SetActualSize(size Size) // Sets AbstractView actual size
+
+	// Gesture methods
+	HasGesture() bool    // Returns true if view have gesture
+	GetGesture() Gesture // Returns view's gesture
+
+	SetGesture(gesture Gesture) // Sets view's gesture
+
+	Render() (Canvas, error) // Renders view to canvas
+}
+```
+Hopefully most of them (except Render) can be inherited from `AbstractView` structure which will also provide basic needed variables:
+```go
+type AbstractView struct {
+	position   Point   // Represents abstract view position in relational coordinates
+	minSize    Size    // Represents abstract view minimal size
+	maxSize    Size    // Represents abstract view maximal size
+	actualSize Size    // Represents abstract view actual size that will be assigned at constraint solving stage
+	gesture    Gesture // Gesture assigned to view
+}
+```
+Each view variable is assumed to be private and setters/getters should be provided
+`Render` method is uniquie for each view. Please note that none of these methods can be chained. Chained setters can be provided if needed.
+
+Example of custom method `MyView` with exta variable `attribute`:
+```go
+type MyView struct {
+    AbstractView
+    attribute Attribute
+}
+
+func (mv MyView) Render() Canvas, error {
+    canvas, error := AllocateCanvas(mv.GetActualSize())
+    if error != nil {
+        return nil, error
+    }
+    ...
+}
+
+func (mv *MyView) Attribute(attribute Attribute) *MyView {
+    mv.attribute = attribute
+    return mv
+}
+
+```
