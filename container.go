@@ -165,7 +165,14 @@ func AbstractStack(axis Axis, children ...View) *AbstractStackObject {
 	stack.SetMaxSize(Size{Infinite, Infinite})
 	stack.SetGesture(nil)
 	stack.SetGravity(Gravity{Center, Center})
+	stack.axis = axis
 	stack.padding = 0
+	return stack
+}
+
+// Adds new element to the end of stack
+func (stack *AbstractStackObject) Add(new View) *AbstractStackObject {
+	stack.children = append(stack.children, new)
 	return stack
 }
 
@@ -220,8 +227,14 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 	stackedSizes := KuruzovSolver(stack.axis, intervals, actualSizeCopy)
 	// Solving parallel sizes
 	parallelSizes := make([]uint, len(stack.children))
+	var parallelSizeMax uint = 0
 	for i, child := range stack.children {
 		childSize := KuruzovSolver(stack.axis.PlaneOrthogonal(), []SizeInterval{child.GetSizeInterval()}, stack.GetActualSize())[0]
+		if i > 0 {
+			parallelSizeMax = max(parallelSizeMax, childSize)
+		} else {
+			parallelSizeMax = childSize
+		}
 		parallelSizes[i] = childSize
 	}
 	// Solving coordinates
@@ -233,10 +246,12 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 		childActualSize.SetComponent(stackedSizes[i], stack.axis)
 		childActualSize.SetComponent(parallelSizes[i], stack.axis.PlaneOrthogonal())
 		child.SetActualSize(childActualSize)
+		childBoxSize := childActualSize
+		childBoxSize.SetComponent(parallelSizeMax, stack.axis.PlaneOrthogonal())
 
 		// Set unshifted child position
-		x := CoordinatesSolver(stack.axis, childActualSize, childActualSize, stack.GetGravity().GetComponent(stack.axis))
-		y := CoordinatesSolver(stack.axis.PlaneOrthogonal(), childActualSize, childActualSize, stack.GetGravity().GetComponent(stack.axis.PlaneOrthogonal()))
+		x := CoordinatesSolver(stack.axis, childActualSize, childBoxSize, stack.GetGravity().GetComponent(stack.axis))
+		y := CoordinatesSolver(stack.axis.PlaneOrthogonal(), childActualSize, childBoxSize, stack.GetGravity().GetComponent(stack.axis.PlaneOrthogonal()))
 		unshiftedChildPos := Vector{0, 0}
 		unshiftedChildPos.SetComponent(x, stack.axis)
 		unshiftedChildPos.SetComponent(y, stack.axis.PlaneOrthogonal())
@@ -264,17 +279,13 @@ func (stack *AbstractStackObject) renderZStack() (Canvas, error) {
 	}
 	for _, child := range stack.children {
 		boxed := Box(child)
+		boxed.SetActualSize(stack.GetActualSize())
 		boxed.SetGravity(stack.GetGravity())
-		boxed.SetPosition(stack.GetPosition())
 		layer, error := boxed.Render()
 		if error != nil {
 			return nil, error
 		}
-		for x := 0; x < int(stack.actualSize.Width); x++ {
-			for y := 0; y < int(stack.actualSize.Height); y++ {
-				canvas[x][y] = layer[x][y].Over(canvas[x][y])
-			}
-		}
+		canvas.Inpaint(layer, Vector{0, 0})
 	}
 	return canvas, nil
 }

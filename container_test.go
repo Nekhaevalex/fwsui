@@ -19,5 +19,4 @@ func TestPlaneSolver(t *testing.T) {
 	for _, view := range stack.children {
 		t.Log(view.GetPosition(), view.GetActualSize())
 	}
-	t.Fail()
 }
