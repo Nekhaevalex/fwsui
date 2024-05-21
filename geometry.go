@@ -233,6 +233,36 @@ func (s Size) Unpack() (uint, uint) {
 
 /******************************************************************************/
 
+// Provides variable size abstraction
+type SizeInterval struct {
+	Min Size
+	Max Size
+}
+
+// Returns pair of 1D sizes (min, max)
+func (si SizeInterval) GetComponent(axis Axis) (uint, uint) {
+	return si.Min.GetComponent(axis), si.Max.GetComponent(axis)
+}
+
+// Sets max size component along axis
+func (si *SizeInterval) SetMaxComponent(value uint, axis Axis) *SizeInterval {
+	si.Max.SetComponent(value, axis)
+	return si
+}
+
+// Sets min size component along axis
+func (si *SizeInterval) SetMinComponent(value uint, axis Axis) *SizeInterval {
+	si.Min.SetComponent(value, axis)
+	return si
+}
+
+// Returns true if min and max sizes are equal along axis
+func (si SizeInterval) Fixed(axis Axis) bool {
+	return si.Min.GetComponent(axis) == si.Max.GetComponent(axis)
+}
+
+/******************************************************************************/
+
 // Frame - represents object for calculations on rectangles
 type Frame struct {
 	UpperLeft  Point

@@ -37,11 +37,10 @@ import (
 // It uses composition, so AbstractView instance will be returned.
 // If chaining needed please define new chaining method.
 type AbstractView struct {
-	position   Point   // Represents abstract view position in parent's coordinates. Assigned by parent object. Default always (0, 0)
-	minSize    Size    // Represents abstract view minimal size
-	maxSize    Size    // Represents abstract view maximal size
-	actualSize Size    // Represents abstract view actual size that will be assigned at constraint solving stage
-	gesture    Gesture // Gesture assigned to view
+	position     Point        // Represents abstract view position in parent's coordinates. Assigned by parent object. Default always (0, 0)
+	sizeInterval SizeInterval // Represents abstract view size interval
+	actualSize   Size         // Represents abstract view actual size that will be assigned at constraint solving stage
+	gesture      Gesture      // Gesture assigned to view
 }
 
 // Returns AbstractView position
@@ -54,14 +53,19 @@ func (av *AbstractView) SetPosition(position Point) {
 	av.position = position
 }
 
+// Returns AbstractView size interval
+func (av AbstractView) GetSizeInterval() SizeInterval {
+	return av.sizeInterval
+}
+
 // Returns AbstractView minimal size
 func (av AbstractView) GetMinSize() Size {
-	return av.minSize
+	return av.sizeInterval.Min
 }
 
 // Returns AbstractView maxinal size
 func (av AbstractView) GetMaxSize() Size {
-	return av.maxSize
+	return av.sizeInterval.Max
 }
 
 // Returns AbstractView actual size
@@ -70,37 +74,43 @@ func (av AbstractView) GetActualSize() Size {
 }
 
 func (av AbstractView) IsFixedSize() bool {
-	return av.minSize.Equal(av.maxSize)
+	return av.sizeInterval.Fixed(X) && av.sizeInterval.Fixed(Y)
 }
 
 // Sets AbstractView exact size (MinSize = MaxSize = size)
 func (av *AbstractView) SetSize(size Size) {
-	av.minSize = size
-	av.maxSize = size
+	av.sizeInterval.Min = size
+	av.sizeInterval.Max = size
 }
 
 // Sets AbstractView minimal size
 func (av *AbstractView) SetMinSize(size Size) {
 	// Increase max size if it is low
-	if size.Height > av.maxSize.Height {
-		av.maxSize.Height = size.Height
+	if size.Height > av.sizeInterval.Max.Height {
+		av.sizeInterval.Max.Height = size.Height
 	}
-	if size.Width > av.maxSize.Width {
-		av.maxSize.Width = size.Width
+	if size.Width > av.sizeInterval.Max.Width {
+		av.sizeInterval.Max.Width = size.Width
 	}
-	av.minSize = size
+	av.sizeInterval.Min = size
 }
 
 // Sets AbstractView maximal size
 func (av *AbstractView) SetMaxSize(size Size) {
 	// Reduce min size if it is low
-	if size.Height < av.minSize.Height {
-		av.minSize.Height = size.Height
+	if size.Height < av.sizeInterval.Min.Height {
+		av.sizeInterval.Min.Height = size.Height
 	}
-	if size.Width < av.minSize.Width {
-		av.minSize.Width = size.Width
+	if size.Width < av.sizeInterval.Min.Width {
+		av.sizeInterval.Min.Width = size.Width
 	}
-	av.maxSize = size
+	av.sizeInterval.Max = size
+}
+
+// Sets AbstractView size interval
+func (av *AbstractView) SetSizeInterval(sizeInterval SizeInterval) {
+	av.SetMinSize(sizeInterval.Min)
+	av.SetMaxSize(sizeInterval.Max)
 }
 
 // Sets AbstractView maximal size
@@ -142,16 +152,18 @@ type View interface {
 	SetPosition(position Point) // Sets AbstractView position
 
 	// Size methods
-	GetMinSize() Size    // Returns AbstractView minimal size
-	GetMaxSize() Size    // Returns AbstractView maxinal size
-	GetActualSize() Size // Returns AbstractView actual size
-	GetFrame() *Frame    // Returns Frame of AbstractView
-	IsFixedSize() bool   // Returns true if min size equal to max size (size is fixed)
+	GetSizeInterval() SizeInterval // Returns AbstractView size interval
+	GetMinSize() Size              // Returns AbstractView minimal size
+	GetMaxSize() Size              // Returns AbstractView maxinal size
+	GetActualSize() Size           // Returns AbstractView actual size
+	GetFrame() *Frame              // Returns Frame of AbstractView
+	IsFixedSize() bool             // Returns true if min size equal to max size (size is fixed)
 
-	SetSize(size Size)       // Sets AbstractView exact size (MinSize = MaxSize = size)
-	SetMinSize(size Size)    // Sets AbstractView minimal size
-	SetMaxSize(size Size)    // Sets AbstractView maximal size
-	SetActualSize(size Size) // Sets AbstractView actual size
+	SetSizeInterval(sizeInterval SizeInterval) // Sets AbstractView size interval
+	SetSize(size Size)                         // Sets AbstractView exact size (MinSize = MaxSize = size)
+	SetMinSize(size Size)                      // Sets AbstractView minimal size
+	SetMaxSize(size Size)                      // Sets AbstractView maximal size
+	SetActualSize(size Size)                   // Sets AbstractView actual size
 
 	// Gesture methods
 	HasGesture() bool    // Returns true if view have gesture
@@ -434,7 +446,11 @@ type SpacerObject struct {
 }
 
 func (spacer *SpacerObject) Render() (Canvas, error) {
-	return AllocateCanvas(spacer.actualSize)
+	canvas, err := AllocateCanvas(spacer.actualSize)
+	if err != nil {
+		return nil, errors.Join(errors.New("SpacerObject was not able to create canvas (plane)"), err)
+	}
+	return canvas, nil
 }
 
 // Chained wrapper of SetPosition
@@ -466,7 +482,7 @@ func (so *SpacerObject) MaxSize(size Size) *SpacerObject {
 // default min width/height is 0. No default Gesture provided.
 func Spacer() *SpacerObject {
 	spacer := new(SpacerObject)
-	spacer.SetMinSize(Size{0, 0})
+	spacer.SetMinSize(Size{1, 1})
 	spacer.SetMaxSize(Size{Infinite, Infinite})
 	return spacer
 }
@@ -693,9 +709,10 @@ func TextField(text *string, prompt string) *TextFieldObject {
 	textfield.prompt = prompt
 	textfield.resultText = text
 	textfield.label.align = Left
-	textfield.label.SetPosition(Point{0, 0})
-	textfield.label.SetSize(Size{Infinite, 1})
-	textfield.label.SetGesture(nil)
+	textfield.SetPosition(Point{0, 0})
+	textfield.SetMinSize(Size{1, 1})
+	textfield.SetMaxSize(Size{Infinite, 1})
+	textfield.SetGesture(nil)
 	textfield.active = false
 	textfield.onFinish = func() {}
 
@@ -718,9 +735,9 @@ func TextField(text *string, prompt string) *TextFieldObject {
 }
 
 func (textfield *TextFieldObject) Render() (Canvas, error) {
-	renderedView, error := textfield.label.Render()
-	if error != nil {
-		return nil, error
+	renderedView, err := textfield.label.Render()
+	if err != nil {
+		return nil, errors.Join(errors.New("TextFieldObject was not able to create canvas (plane)"), err)
 	}
 	if textfield.active {
 		if textfield.typeIndex != textfield.selectIndex {

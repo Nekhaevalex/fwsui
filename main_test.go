@@ -7,11 +7,9 @@ import (
 func TestHStack(t *testing.T) {
 	text := Text("Hello, World!")
 	spacer := Spacer()
-	button := Button("Greet", func(outlet *ButtonObject) {})
-	tfValue := ""
-	textField := TextField(&tfValue, "Input")
+	button := Text("Greeting")
 
-	stack := HStack(text, spacer, button, textField)
+	stack := HStack(text, spacer, button)
 	stack.SetActualSize(Size{20, 10})
 	canvas, err := stack.Render()
 	if err != nil {

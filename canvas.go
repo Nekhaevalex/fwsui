@@ -16,7 +16,7 @@ type Canvas [][]proto.Cell
 
 // Sets cell at point
 func (c Canvas) Set(point Point, cell proto.Cell) Canvas {
-	c[point.X][point.Y] = cell
+	c[point.X][point.Y] = cell.Over(c[point.X][point.Y])
 	return c
 }
 
@@ -67,7 +67,7 @@ func (c Canvas) Inpaint(child Canvas, childStart Vector) Canvas {
 func (c Canvas) Resize(newSize Size) (Canvas, error) {
 	newCanvas, err := AllocateCanvas(newSize)
 	if err != nil {
-		return nil, errors.Join(errors.New("Resize failed on allocation"), err)
+		return nil, errors.Join(errors.New("resize failed on allocation"), err)
 	}
 	newCanvas.Inpaint(c, Vector{0, 0})
 	return newCanvas, err
@@ -76,7 +76,7 @@ func (c Canvas) Resize(newSize Size) (Canvas, error) {
 func AllocateCanvas(size Size) (Canvas, error) {
 	if size.Width == 0 || size.Height == 0 {
 		return nil, fmt.Errorf(
-			"AllocateCanvas: at least one dimension of canvas is zero: (W: %d, H: %d)\nCheck if ActualSize was assigned",
+			"AllocateCanvas: at least one dimension of canvas is zero: (W: %d, H: %d)\ncheck if ActualSize was assigned",
 			size.Width, size.Height)
 	}
 	canvas := make([][]proto.Cell, size.Width)

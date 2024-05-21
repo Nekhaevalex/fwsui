@@ -4,7 +4,6 @@ package fwsui
 
 import (
 	"errors"
-	"log"
 )
 
 // Represents abstract container and it's key attributes such as position, sizes
@@ -56,7 +55,7 @@ func (ac *AbstractContainer) GetGravity() Gravity {
 }
 
 // Applies specified AbstractContainer gravity to children which are containters.
-func (ac AbstractContainer) ApplyChildGravity() {
+func (ac AbstractContainer) ApplyChildrenGravity() {
 	for _, child := range ac.children {
 		if asserted, ok := child.(Container); ok {
 			asserted.SetGravity(ac.gravity)
@@ -101,65 +100,6 @@ func Box(child View) *BoxObject {
 	return box
 }
 
-// Solves child's size constraints when Box actual size is already known but
-// child's size still can float.
-// Returns child's estimated size.
-func (box BoxObject) solveConstraintsSize() Size {
-	// Alias to child
-	child := box.children[0]
-	if child == nil {
-		log.Fatal("nil reference to child in box", box)
-	}
-
-	// Solve 1D problem
-	solveOnAxis := func(axis Axis) uint {
-		actualSize := box.GetActualSize().GetComponent(axis)
-		childMinSize := child.GetMinSize().GetComponent(axis)
-		childMaxSize := child.GetMaxSize().GetComponent(axis)
-		if childMinSize <= actualSize && childMaxSize <= actualSize {
-			return childMaxSize
-		} else if childMinSize <= actualSize && actualSize <= childMaxSize {
-			return actualSize
-		} else if childMinSize >= actualSize && childMaxSize > actualSize {
-			return childMinSize
-		} else {
-			return childMinSize
-		}
-	}
-
-	// Returns on 2 axis
-	return Size{solveOnAxis(X), solveOnAxis(Y)}
-}
-
-// Solves starting position according to solved size (with solveConstraintsSize),
-// and gravity.
-func (box BoxObject) solveConstraintsPosition() Point {
-	// Alias to child
-	child := box.children[0]
-	// Solve 1D problem
-	solveOnAxis := func(axis Axis) int {
-		// Coordinate of frame end (xStart + size)
-		cEnd := box.position.GetComponent(axis) + int(box.actualSize.GetComponent(axis))
-		// Coordinate of frame center (xStart + size / 2)
-		cMiddle := box.position.GetComponent(axis) + int(box.actualSize.GetComponent(axis))/2
-		switch box.gravity.GetComponent(axis).TransformAlignment() {
-		case Left:
-			// xStart
-			return box.position.GetComponent(axis)
-		case Center:
-			// xCenter - childSize / 2
-			return cMiddle - int(child.GetActualSize().GetComponent(axis))/2
-		case Right:
-			// xEnd - childSize
-			return cEnd - int(child.GetActualSize().GetComponent(axis))
-		default:
-			return 0
-		}
-	}
-
-	return Point{solveOnAxis(X), solveOnAxis(Y)}
-}
-
 // Renders box and it's child
 func (box *BoxObject) Render() (Canvas, error) {
 	// Allocating canvas
@@ -170,28 +110,19 @@ func (box *BoxObject) Render() (Canvas, error) {
 	// Alias child
 	child := box.children[0]
 	// Solve and apply child size
-	child.SetActualSize(box.solveConstraintsSize())
+	xSize := KuruzovSolver(X, []SizeInterval{child.GetSizeInterval()}, box.actualSize)[0]
+	ySize := KuruzovSolver(Y, []SizeInterval{child.GetSizeInterval()}, box.actualSize)[0]
+	child.SetActualSize(Size{xSize, ySize})
 	// Solve child position
-	child.SetPosition(box.solveConstraintsPosition())
+	x := CoordinatesSolver(X, child.GetActualSize(), box.GetActualSize(), box.gravity.Horizontal)
+	y := CoordinatesSolver(Y, child.GetActualSize(), box.GetActualSize(), box.gravity.Vertical)
+	child.SetPosition(Point{x, y})
 	// Get child's rendered canvas
 	childCanvas, childError := child.Render()
 	if childError != nil {
 		return nil, childError
 	}
-	// Calculate drawing start position
-	// Get frames of objects
-	boxFrame := box.GetFrame()
-	childFrame := child.GetFrame()
-	// Cut child frame
-	cuttedChildFrame := childFrame.Cut(*boxFrame) // In box coordinates
-	startX, endX := cuttedChildFrame.GetStartEnd(X)
-	startY, endY := cuttedChildFrame.GetStartEnd(Y)
-
-	for x := startX; x < endX; x++ {
-		for y := startY; y < endY; y++ {
-			canvas[x][y] = childCanvas[x-child.GetPosition().X][y-child.GetPosition().Y]
-		}
-	}
+	canvas.Inpaint(childCanvas, Vector(child.GetPosition()))
 	return canvas, nil
 }
 
@@ -275,105 +206,46 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 		return nil, errors.Join(errors.New("AbstractStackObject was not able to create canvas (plane)"), error)
 	}
 
-	// Standard value checks
-	// 1. Check if all sizes are fixed
-	allFixedCheck := func() bool {
-		fixedChildren := 0
-		for _, child := range stack.children {
-			if child.IsFixedSize() {
-				fixedChildren++
-			}
-		}
-		return fixedChildren == len(stack.children)
+	// Solve size constraints
+	// Retrieving size intervals
+	intervals := make([]SizeInterval, len(stack.children))
+	for i, child := range stack.children {
+		intervals[i] = child.GetSizeInterval()
 	}
-
-	// Solving along stack axis
-	solveConstraintsAlongAxis := func() {
-		// Solving with Kuruzov's method:
-		// x_i = x_i^lower + (x_i^upper - x_i^lower) * alpha
-		// alpha = (x^upper - sum_i x_i^lower) / sum_i (x_i^upper - x_i^lower)
-
-		// Calculating alpha
-		// retrieving xUpper from stack end subtracting padding space
-		// We also assume that actual size of stack was already evaluated
-		xUpper := int(stack.GetActualSize().GetComponent(stack.axis)) - (stack.padding * (len(stack.children) - 1))
-		// upper sum
-		sum1 := 0
-		for _, child := range stack.children {
-			xILower := child.GetMinSize().GetComponent(stack.axis)
-			sum1 += int(xILower)
-		}
-		// lower sum
-		sum2 := 0
-		for _, child := range stack.children {
-			xIUpper := child.GetMaxSize().GetComponent(stack.axis)
-			// Override child max size to xUpper if its infinite
-			if xIUpper == Infinite {
-				xIUpper = uint(xUpper)
-			}
-			xILower := child.GetMinSize().GetComponent(stack.axis)
-			diff := xIUpper - xILower
-			sum2 += int(diff)
-		}
-		alpha := float32(xUpper-sum1) / float32(sum2)
-
-		// Calculating x_i/y_i
-		for _, child := range stack.children {
-			xIUpper := child.GetMaxSize().GetComponent(stack.axis)
-			// Override child max size to xUpper if its infinite
-			if xIUpper == Infinite {
-				xIUpper = uint(xUpper)
-			}
-			xILower := child.GetMinSize().GetComponent(stack.axis)
-			xI := xILower + (xIUpper-xILower)*uint(alpha)
-			actualSize := Size{0, 0}
-			actualSize.SetComponent(xI, stack.axis)
-
-			yI := min(
-				stack.GetActualSize().GetComponent(stack.axis.PlaneOrthogonal()),
-				child.GetMaxSize().GetComponent(stack.axis.PlaneOrthogonal()),
-			)
-			yI = max(yI, child.GetMinSize().GetComponent(stack.axis.PlaneOrthogonal()))
-			actualSize.SetComponent(yI, stack.axis.PlaneOrthogonal())
-			child.SetActualSize(actualSize)
-		}
+	// Apply padding to actual size
+	actualSizeCopy := stack.GetActualSize()
+	newSizeAlongAxis := stack.actualSize.GetComponent(stack.axis) - uint(stack.padding)*uint(len(stack.children)-1)
+	actualSizeCopy.SetComponent(newSizeAlongAxis, stack.axis)
+	// Solving stacked sizes
+	stackedSizes := KuruzovSolver(stack.axis, intervals, actualSizeCopy)
+	// Solving parallel sizes
+	parallelSizes := make([]uint, len(stack.children))
+	for i, child := range stack.children {
+		childSize := KuruzovSolver(stack.axis.PlaneOrthogonal(), []SizeInterval{child.GetSizeInterval()}, stack.GetActualSize())[0]
+		parallelSizes[i] = childSize
 	}
+	// Solving coordinates
+	translationVector := Vector{0, 0}
+	for i, child := range stack.children {
+		childActualSize := Size{0, 0}
+		childActualSize.SetComponent(stackedSizes[i], stack.axis)
+		childActualSize.SetComponent(parallelSizes[i], stack.axis.PlaneOrthogonal())
+		child.SetActualSize(childActualSize)
 
-	// Solving if needed
-	if !allFixedCheck() {
-		solveConstraintsAlongAxis()
-	}
+		x := CoordinatesSolver(stack.axis, childActualSize, stack.GetActualSize(), stack.GetGravity().GetComponent(stack.axis))
+		y := CoordinatesSolver(stack.axis.PlaneOrthogonal(), childActualSize, stack.GetActualSize(), stack.GetGravity().GetComponent(stack.axis.PlaneOrthogonal()))
+		unshiftedChildPos := Vector{0, 0}
+		unshiftedChildPos.SetComponent(x, stack.axis)
+		unshiftedChildPos.SetComponent(y, stack.axis.PlaneOrthogonal())
 
-	// With all actual sizes now known we need to solve gravity
-	// Solving it with boxes
-	// Translation vector
-	tVector := Vector{0, 0}
-	paddingVector := Vector{0, 0}
-	paddingVector.SetComponent(stack.padding, stack.axis)
-	for _, child := range stack.children {
-		box := Box(child)
-		box.SetSize(child.GetActualSize())
-		box.SetActualSize(child.GetActualSize())
-		box.SetGravity(stack.GetGravity())
-		box.SetPosition(Point(tVector))
-		tVector = tVector.Add(child.GetActualSize().ToVector().Project(stack.axis)).Add(paddingVector)
-		// Render stage
-		childCanvas, error := box.Render()
-		if error != nil {
-			return nil, error
+		childTranslation := translationVector.Add(Vector{stack.padding, stack.padding}).Project(stack.axis).Mul(i)
+		child.SetPosition(Point(childTranslation))
+		childCanvas, childError := child.Render()
+		if childError != nil {
+			return nil, errors.Join(errors.New("child failed to render"), childError)
 		}
-
-		childFrame := child.GetFrame().Cut(*stack.GetFrame())
-		startX, endX := childFrame.GetStartEnd(X)
-		startY, endY := childFrame.GetStartEnd(Y)
-
-		for x := startX; x < endX; x++ {
-			for y := startY; y < endY; y++ {
-				canvas[x][y] = childCanvas[x-child.GetPosition().X][y-child.GetPosition().Y]
-			}
-		}
+		canvas.Inpaint(childCanvas, childTranslation.Sub(unshiftedChildPos))
 	}
-
 	return canvas, nil
 }
 

@@ -14,7 +14,9 @@ const (
 	Bottom
 )
 
-// Transfroms any alignment to horizontal
+// Transfroms any alignment to horizontal.
+// Left, Right, Center are not changed.
+// Top -> Left, Bottom -> Right
 func (alignment Align) TransformAlignment() Align {
 	switch alignment {
 	case Top:
