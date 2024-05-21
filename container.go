@@ -226,25 +226,33 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 	}
 	// Solving coordinates
 	translationVector := Vector{0, 0}
+	paddingVector := Vector{stack.padding, stack.padding}
 	for i, child := range stack.children {
+		// Set resulted size
 		childActualSize := Size{0, 0}
 		childActualSize.SetComponent(stackedSizes[i], stack.axis)
 		childActualSize.SetComponent(parallelSizes[i], stack.axis.PlaneOrthogonal())
 		child.SetActualSize(childActualSize)
 
-		x := CoordinatesSolver(stack.axis, childActualSize, stack.GetActualSize(), stack.GetGravity().GetComponent(stack.axis))
-		y := CoordinatesSolver(stack.axis.PlaneOrthogonal(), childActualSize, stack.GetActualSize(), stack.GetGravity().GetComponent(stack.axis.PlaneOrthogonal()))
+		// Set unshifted child position
+		x := CoordinatesSolver(stack.axis, childActualSize, childActualSize, stack.GetGravity().GetComponent(stack.axis))
+		y := CoordinatesSolver(stack.axis.PlaneOrthogonal(), childActualSize, childActualSize, stack.GetGravity().GetComponent(stack.axis.PlaneOrthogonal()))
 		unshiftedChildPos := Vector{0, 0}
 		unshiftedChildPos.SetComponent(x, stack.axis)
 		unshiftedChildPos.SetComponent(y, stack.axis.PlaneOrthogonal())
 
-		childTranslation := translationVector.Add(Vector{stack.padding, stack.padding}).Project(stack.axis).Mul(i)
-		child.SetPosition(Point(childTranslation))
+		translatedChildPos := translationVector.Add(unshiftedChildPos)
+
+		child.SetPosition(Point(translatedChildPos))
+
+		nextStartPos := translatedChildPos.Add(childActualSize.ToVector()).Add(paddingVector).Project(stack.axis)
+		translationVector = nextStartPos
+
 		childCanvas, childError := child.Render()
 		if childError != nil {
 			return nil, errors.Join(errors.New("child failed to render"), childError)
 		}
-		canvas.Inpaint(childCanvas, childTranslation.Sub(unshiftedChildPos))
+		canvas.Inpaint(childCanvas, translationVector.Sub(unshiftedChildPos))
 	}
 	return canvas, nil
 }

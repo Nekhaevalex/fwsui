@@ -45,13 +45,13 @@ func TestKuruzovSolver(t *testing.T) {
 	// Out of bound case
 	intervals = []SizeInterval{
 		{
-			Min: Size{10, 10}, Max: Size{10, 10},
+			Min: Size{10, 10}, Max: Size{15, 10},
 		},
 		{
-			Min: Size{10, 10}, Max: Size{10, 10},
+			Min: Size{10, 10}, Max: Size{15, 10},
 		},
 		{
-			Min: Size{10, 10}, Max: Size{10, 10},
+			Min: Size{10, 10}, Max: Size{15, 10},
 		},
 	}
 	constr = Size{27, 27}
