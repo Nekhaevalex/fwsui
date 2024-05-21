@@ -252,7 +252,7 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 		if childError != nil {
 			return nil, errors.Join(errors.New("child failed to render"), childError)
 		}
-		canvas.Inpaint(childCanvas, translationVector.Sub(unshiftedChildPos))
+		canvas.Inpaint(childCanvas, translatedChildPos)
 	}
 	return canvas, nil
 }
