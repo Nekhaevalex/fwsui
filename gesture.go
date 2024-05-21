@@ -12,6 +12,15 @@ type GestureDescriptor struct {
 	Pointer  Gesture
 }
 
+func (gd GestureDescriptor) PointInArea(point Point) bool {
+	if point.X >= gd.Position.X && point.Y >= gd.Position.Y {
+		if point.X < (gd.Position.X+int(gd.Size.Width)) && point.Y < (gd.Position.Y+int(gd.Size.Height)) {
+			return true
+		}
+	}
+	return false
+}
+
 // Gesture – interface used for implementing interactive elements like
 // buttons, drag areas, etc.
 type Gesture interface {
@@ -24,7 +33,7 @@ type Gesture interface {
 }
 
 // Clicks
-type _AClickGesture struct {
+type AClickGestureObject struct {
 	Position                     Point
 	Size                         Size
 	mouseButton                  termbox.Key
@@ -36,12 +45,12 @@ type _AClickGesture struct {
 	altGesture                   Gesture
 }
 
-func (click *_AClickGesture) setParentViewSizes(v View) {
+func (click *AClickGestureObject) setParentViewSizes(v View) {
 	click.Position = v.GetPosition()
 	click.Size = v.GetActualSize()
 }
 
-func (click *_AClickGesture) GetGestureDescriptor() GestureDescriptor {
+func (click *AClickGestureObject) GetGestureDescriptor() GestureDescriptor {
 	descriptor := GestureDescriptor{
 		Position: click.Position,
 		Size:     click.Size,
@@ -51,11 +60,11 @@ func (click *_AClickGesture) GetGestureDescriptor() GestureDescriptor {
 	return descriptor
 }
 
-func (click *_AClickGesture) updating(event *proto.EventRequest) {
+func (click *AClickGestureObject) updating(event *proto.EventRequest) {
 	switch event.Key {
 	case click.mouseButton:
 		click.buttonMatched = true
-		if pointInArea(event.MouseX, event.MouseY, click.descriptor) {
+		if click.descriptor.PointInArea(Point{event.MouseX, event.MouseY}) {
 			click.inside = true
 		} else {
 			click.inside = false
@@ -65,7 +74,7 @@ func (click *_AClickGesture) updating(event *proto.EventRequest) {
 	case termbox.MouseRelease:
 		if click.buttonMatched {
 			click.buttonMatched = false
-			if pointInArea(event.MouseX, event.MouseY, click.descriptor) {
+			if click.descriptor.PointInArea(Point{event.MouseX, event.MouseY}) {
 				click.inside = true
 			} else {
 				click.inside = false
@@ -83,11 +92,11 @@ func (click *_AClickGesture) updating(event *proto.EventRequest) {
 	}
 }
 
-func (click *_AClickGesture) onChanged() {
+func (click *AClickGestureObject) onChanged() {
 	click.action_changed(click.inside)
 }
 
-func (click *_AClickGesture) onEnded() {
+func (click *AClickGestureObject) onEnded() {
 	click.current_count++
 	if click.current_count == click.count {
 		click.action_ended(click.inside)
@@ -95,46 +104,46 @@ func (click *_AClickGesture) onEnded() {
 	}
 }
 
-func (click *_AClickGesture) setAltGesture(gesture Gesture) {
+func (click *AClickGestureObject) setAltGesture(gesture Gesture) {
 	click.altGesture = gesture
 }
 
-func (click *_AClickGesture) OnChanged(action func(inside bool)) *_AClickGesture {
+func (click *AClickGestureObject) OnChanged(action func(inside bool)) *AClickGestureObject {
 	click.action_changed = action
 	return click
 }
 
-func (click *_AClickGesture) OnEnded(action func(inside bool)) *_AClickGesture {
+func (click *AClickGestureObject) OnEnded(action func(inside bool)) *AClickGestureObject {
 	click.action_ended = action
 	return click
 }
 
-func AClickGesture(button termbox.Key, count int) *_AClickGesture {
-	gesture := new(_AClickGesture)
+func AClickGesture(button termbox.Key, count int) *AClickGestureObject {
+	gesture := new(AClickGestureObject)
 	gesture.mouseButton = button
 	gesture.count = count
 	gesture.current_count = 0
 	return gesture
 }
 
-func LClickGesture(count int) *_AClickGesture {
-	gesture := new(_AClickGesture)
+func LClickGesture(count int) *AClickGestureObject {
+	gesture := new(AClickGestureObject)
 	gesture.mouseButton = termbox.MouseLeft
 	gesture.count = count
 	gesture.current_count = 0
 	return gesture
 }
 
-func RClickGesture(count int) *_AClickGesture {
-	gesture := new(_AClickGesture)
+func RClickGesture(count int) *AClickGestureObject {
+	gesture := new(AClickGestureObject)
 	gesture.mouseButton = termbox.MouseRight
 	gesture.count = count
 	gesture.current_count = 0
 	return gesture
 }
 
-func MClickGesture(count int) *_AClickGesture {
-	gesture := new(_AClickGesture)
+func MClickGesture(count int) *AClickGestureObject {
+	gesture := new(AClickGestureObject)
 	gesture.mouseButton = termbox.MouseMiddle
 	gesture.count = count
 	gesture.current_count = 0
@@ -142,13 +151,14 @@ func MClickGesture(count int) *_AClickGesture {
 }
 
 type Value struct {
-	startLocationX, startLocationY int
-	locationX, locationY           int
-	translationX, translationY     int
+	startPosition Point
+	location      Point
+	translation   Vector
 }
 
-type _DragGesture struct {
-	x, y, width, height          int
+type DragGestureObject struct {
+	Position                     Point
+	Size                         Size
 	descriptor                   GestureDescriptor
 	value                        Value
 	action_changed, action_ended func(value Value)
@@ -157,41 +167,36 @@ type _DragGesture struct {
 	altGesture                   Gesture
 }
 
-func (drag *_DragGesture) GetGestureDescriptor() GestureDescriptor {
+func (drag *DragGestureObject) GetGestureDescriptor() GestureDescriptor {
 	descriptor := GestureDescriptor{
-		Position: Point{drag.x, drag.y},
-		Size:     Size{uint(drag.width), uint(drag.height)},
+		Position: drag.Position,
+		Size:     drag.Size,
 		Pointer:  drag,
 	}
 	drag.descriptor = descriptor
 	return descriptor
 }
-func (drag *_DragGesture) setParentViewSizes(v View) {
-	drag.x, drag.y = v.getPos()
-	drag.width, drag.height = v.getActualSize()
+func (drag *DragGestureObject) setParentViewSizes(v View) {
+	drag.Position = v.GetPosition()
+	drag.Size = v.GetActualSize()
 }
-func (drag *_DragGesture) updating(event *proto.EventRequest) {
+func (drag *DragGestureObject) updating(event *proto.EventRequest) {
 	switch event.Key {
 	case termbox.MouseLeft:
 		drag.buttonMatched = true
 		if !drag.in_process {
-			drag.value.startLocationX = event.MouseX
-			drag.value.startLocationY = event.MouseY
+			drag.value.startPosition = Point{event.MouseX, event.MouseY}
 			drag.in_process = true
 		}
-		drag.value.locationX = event.MouseX
-		drag.value.locationY = event.MouseY
-		drag.value.translationX = drag.value.locationX - drag.value.startLocationX
-		drag.value.translationY = drag.value.locationY - drag.value.startLocationY
+		drag.value.location = Point{event.MouseX, event.MouseY}
+		drag.value.translation = Vector(drag.value.location).Sub(Vector(drag.value.startPosition))
 		drag.onChanged()
 	case termbox.MouseRelease:
 		if drag.buttonMatched {
 			drag.buttonMatched = false
 			drag.in_process = false
-			drag.value.locationX = event.MouseX
-			drag.value.locationY = event.MouseY
-			drag.value.translationX = drag.value.locationX - drag.value.startLocationX
-			drag.value.translationY = drag.value.locationY - drag.value.startLocationY
+			drag.value.location = Point{event.MouseX, event.MouseY}
+			drag.value.translation = Vector(drag.value.location).Sub(Vector(drag.value.startPosition))
 			drag.onEnded()
 		} else {
 			if drag.altGesture != nil {
@@ -204,32 +209,32 @@ func (drag *_DragGesture) updating(event *proto.EventRequest) {
 		}
 	}
 }
-func (drag *_DragGesture) onChanged() {
+func (drag *DragGestureObject) onChanged() {
 	if drag.action_changed != nil {
 		drag.action_changed(drag.value)
 	}
 }
-func (drag *_DragGesture) onEnded() {
+func (drag *DragGestureObject) onEnded() {
 	if drag.action_ended != nil {
 		drag.action_ended(drag.value)
 	}
 }
-func (drag *_DragGesture) setAltGesture(gesture Gesture) {
+func (drag *DragGestureObject) setAltGesture(gesture Gesture) {
 	drag.altGesture = gesture
 }
 
-func (drag *_DragGesture) OnChanged(action func(value Value)) *_DragGesture {
+func (drag *DragGestureObject) OnChanged(action func(value Value)) *DragGestureObject {
 	drag.action_changed = action
 	return drag
 }
 
-func (drag *_DragGesture) OnEnded(action func(value Value)) *_DragGesture {
+func (drag *DragGestureObject) OnEnded(action func(value Value)) *DragGestureObject {
 	drag.action_ended = action
 	return drag
 }
 
-func DragGesture() *_DragGesture {
-	drag := new(_DragGesture)
+func DragGesture() *DragGestureObject {
+	drag := new(DragGestureObject)
 	drag.in_process = false
 	return drag
 }

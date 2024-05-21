@@ -6,6 +6,7 @@
 package fwsui
 
 import (
+	"errors"
 	"unicode/utf8"
 
 	proto "github.com/Nekhaevalex/fwsprotocol"
@@ -69,7 +70,7 @@ func (av AbstractView) GetActualSize() Size {
 }
 
 func (av AbstractView) IsFixedSize() bool {
-	return av.minSize.IsEqual(av.maxSize)
+	return av.minSize.Equal(av.maxSize)
 }
 
 // Sets AbstractView exact size (MinSize = MaxSize = size)
@@ -209,7 +210,7 @@ func (r *RectangleObject) MaxSize(size Size) *RectangleObject {
 func (r RectangleObject) Render() (Canvas, error) {
 	canvas, error := AllocateCanvas(r.GetActualSize())
 	if error != nil {
-		return nil, error
+		return nil, errors.Join(errors.New("RectangleObject was not able to create canvas (plane)"), error)
 	}
 	for x := 0; x < int(r.GetActualSize().Width); x++ {
 		for y := 0; y < int(r.GetActualSize().Height); y++ {
@@ -339,7 +340,7 @@ func (text *TextObject) constructAttribute() proto.Attr {
 func (text *TextObject) Render() (Canvas, error) {
 	canvas, error := AllocateCanvas(text.actualSize)
 	if error != nil {
-		return nil, error
+		return nil, errors.Join(errors.New("TextObject was not able to create canvas (plane)"), error)
 	}
 	width, height := text.actualSize.Unpack()
 	for x := 0; x < int(width); x++ {
@@ -705,8 +706,8 @@ func TextField(text *string, prompt string) *TextFieldObject {
 			textfield.enableInput()
 			go textfield.handleEvent()
 		}
-		sel1 := min(max(0, value.startLocationX-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
-		sel2 := min(max(0, value.locationX-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
+		sel1 := min(max(0, value.startPosition.X-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
+		sel2 := min(max(0, value.startPosition.Y-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
 		textfield.typeIndex = min(sel1, sel2)
 		textfield.selectIndex = max(sel1, sel2)
 	}).OnEnded(func(value Value) {

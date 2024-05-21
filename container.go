@@ -4,6 +4,7 @@ package fwsui
 
 import (
 	"errors"
+	"log"
 )
 
 // Represents abstract container and it's key attributes such as position, sizes
@@ -91,7 +92,7 @@ type BoxObject struct {
 func Box(child View) *BoxObject {
 	box := new(BoxObject)
 	box.children = make([]View, 1)
-	box.children = append(box.children, child)
+	box.children[0] = child
 	box.SetPosition(Point{0, 0})
 	box.SetMinSize(Size{0, 0})
 	box.SetMaxSize(Size{Infinite, Infinite})
@@ -106,6 +107,9 @@ func Box(child View) *BoxObject {
 func (box BoxObject) solveConstraintsSize() Size {
 	// Alias to child
 	child := box.children[0]
+	if child == nil {
+		log.Fatal("nil reference to child in box", box)
+	}
 
 	// Solve 1D problem
 	solveOnAxis := func(axis Axis) uint {
@@ -161,7 +165,7 @@ func (box *BoxObject) Render() (Canvas, error) {
 	// Allocating canvas
 	canvas, error := AllocateCanvas(box.GetActualSize())
 	if error != nil {
-		return nil, error
+		return nil, errors.Join(errors.New("BoxObject was not able to create canvas"), error)
 	}
 	// Alias child
 	child := box.children[0]
@@ -268,7 +272,7 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 	// Allocate canvas
 	canvas, error := AllocateCanvas(stack.GetActualSize())
 	if error != nil {
-		return nil, error
+		return nil, errors.Join(errors.New("AbstractStackObject was not able to create canvas (plane)"), error)
 	}
 
 	// Standard value checks
@@ -303,15 +307,23 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 		sum2 := 0
 		for _, child := range stack.children {
 			xIUpper := child.GetMaxSize().GetComponent(stack.axis)
+			// Override child max size to xUpper if its infinite
+			if xIUpper == Infinite {
+				xIUpper = uint(xUpper)
+			}
 			xILower := child.GetMinSize().GetComponent(stack.axis)
 			diff := xIUpper - xILower
 			sum2 += int(diff)
 		}
-		alpha := (xUpper - sum1) / sum2
+		alpha := float32(xUpper-sum1) / float32(sum2)
 
 		// Calculating x_i/y_i
 		for _, child := range stack.children {
 			xIUpper := child.GetMaxSize().GetComponent(stack.axis)
+			// Override child max size to xUpper if its infinite
+			if xIUpper == Infinite {
+				xIUpper = uint(xUpper)
+			}
 			xILower := child.GetMinSize().GetComponent(stack.axis)
 			xI := xILower + (xIUpper-xILower)*uint(alpha)
 			actualSize := Size{0, 0}
@@ -323,6 +335,7 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 			)
 			yI = max(yI, child.GetMinSize().GetComponent(stack.axis.PlaneOrthogonal()))
 			actualSize.SetComponent(yI, stack.axis.PlaneOrthogonal())
+			child.SetActualSize(actualSize)
 		}
 	}
 
@@ -340,9 +353,10 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 	for _, child := range stack.children {
 		box := Box(child)
 		box.SetSize(child.GetActualSize())
+		box.SetActualSize(child.GetActualSize())
 		box.SetGravity(stack.GetGravity())
 		box.SetPosition(Point(tVector))
-		tVector.Add(child.GetActualSize().ToVector().Project(stack.axis)).Add(paddingVector)
+		tVector = tVector.Add(child.GetActualSize().ToVector().Project(stack.axis)).Add(paddingVector)
 		// Render stage
 		childCanvas, error := box.Render()
 		if error != nil {
@@ -366,7 +380,7 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 func (stack *AbstractStackObject) renderZStack() (Canvas, error) {
 	canvas, error := AllocateCanvas(stack.GetActualSize())
 	if error != nil {
-		return nil, error
+		return nil, errors.Join(errors.New("AbstractStackObject was not able to create canvas (zstack)"), error)
 	}
 	for _, child := range stack.children {
 		boxed := Box(child)

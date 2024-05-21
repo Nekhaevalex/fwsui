@@ -1,6 +1,8 @@
 package fwsui
 
 import (
+	"log"
+
 	proto "github.com/Nekhaevalex/fwsprotocol"
 	"github.com/nsf/termbox-go"
 )
@@ -15,7 +17,7 @@ type Scene interface {
 	eventHandler()                             // Handler for incomming events
 }
 
-type _Window struct {
+type WindowObject struct {
 	// Main values
 	x, y, width, height int
 	app                 *_App
@@ -26,8 +28,8 @@ type _Window struct {
 	quit                chan int
 	background          proto.Color
 	body                View
-	windowContainer     *_ZStack
-	staticCanvas        [][]proto.Cell
+	windowContainer     *AbstractStackObject
+	staticCanvas        Canvas
 	prevMouse           prevGesture
 	lastX, lastY        int
 	lastW, lastH        int
@@ -35,7 +37,7 @@ type _Window struct {
 	titleText           *TextObject
 }
 
-func (window *_Window) Close() {
+func (window *WindowObject) Close() {
 	delete(window.app.scenes, window.layerId)
 	delete_request := &proto.DeleteRequest{Id: window.layerId}
 	window.app.sendRequest(delete_request)
@@ -43,18 +45,18 @@ func (window *_Window) Close() {
 	window.quit <- 1
 }
 
-func (window *_Window) OnClose(closeFunc func()) *_Window {
+func (window *WindowObject) OnClose(closeFunc func()) *WindowObject {
 	window.onCloseFunc = closeFunc
 	return window
 }
 
-func (window *_Window) SetSize(width, height int) *_Window {
+func (window *WindowObject) SetSize(width, height int) *WindowObject {
 	window.width = width
 	window.height = height
 	return window
 }
 
-func (window *_Window) SetTitle(s string) *_Window {
+func (window *WindowObject) SetTitle(s string) *WindowObject {
 	window.title = s
 	if window.windowContainer != nil {
 		window.titleText.SetText(s)
@@ -62,11 +64,11 @@ func (window *_Window) SetTitle(s string) *_Window {
 	return window
 }
 
-func (window *_Window) bindApp(app *_App) {
+func (window *WindowObject) bindApp(app *_App) {
 	window.app = app
 }
 
-func (window *_Window) requestLayerId() proto.ID {
+func (window *WindowObject) requestLayerId() proto.ID {
 	// Construct initial window creations request
 	new_window_request := &proto.NewWindowRequest{
 		Pid:    window.app.pid,
@@ -79,28 +81,28 @@ func (window *_Window) requestLayerId() proto.ID {
 	return window.layerId
 }
 
-func (window *_Window) getEventChannel() chan *proto.EventRequest {
+func (window *WindowObject) getEventChannel() chan *proto.EventRequest {
 	return window.events
 }
 
-func (window *_Window) moveWindow(translationX, translationY int) {
+func (window *WindowObject) moveWindow(translation Vector) {
 	moveRequest := &proto.MoveRequest{
 		Id: window.layerId,
-		X:  translationX - window.lastX,
-		Y:  translationY - window.lastY,
+		X:  translation.X - window.lastX,
+		Y:  translation.Y - window.lastY,
 	}
 	window.app.sendRequest(moveRequest)
 	render := &proto.RenderRequest{Id: window.layerId}
 	window.app.sendRequest(render)
 	// window.lastX = translationX
 	// window.lastY = translationY
-	window.lastX = translationX
-	window.lastY = translationY
+	window.lastX = translation.X
+	window.lastY = translation.Y
 }
 
-func (window *_Window) resizeWindow(translationX, translationY int) {
-	resulsW := window.width + translationX - window.lastW
-	resulsH := window.height + translationY - window.lastH
+func (window *WindowObject) resizeWindow(translation Vector) {
+	resulsW := window.width + translation.X - window.lastW
+	resulsH := window.height + translation.Y - window.lastH
 	if resulsW > 15 && resulsH > 5 {
 		window.width = resulsW
 		window.height = resulsH
@@ -111,14 +113,14 @@ func (window *_Window) resizeWindow(translationX, translationY int) {
 		}
 		window.app.sendRequest(resizeRequest)
 	}
-	window.lastW = translationX
-	window.lastH = translationY
+	window.lastW = translation.X
+	window.lastH = translation.Y
 }
 
-func (window *_Window) buildContent() {
+func (window *WindowObject) buildContent() {
 	// Move gesture
 	windowMoveGesture := DragGesture().OnChanged(func(value Value) {
-		window.moveWindow(value.translationX, value.translationY)
+		window.moveWindow(value.translation)
 	}).OnEnded(func(value Value) {
 		window.lastX = 0
 		window.lastY = 0
@@ -126,23 +128,23 @@ func (window *_Window) buildContent() {
 
 	shadowColor := Black
 	shadowColor.A = 127
-	shadowRect := Text("").SetSize(-1, -1).Background(shadowColor).Foreground(shadowColor)
+	shadowRect := Text("").MaxSize(Size{Infinite, Infinite}).Background(shadowColor).Foreground(shadowColor)
 
 	shadowLayer := VStack(
-		Spacer().SetSize(-1, 1),
+		Spacer().MaxSize(Size{Infinite, 1}),
 		HStack(
-			Spacer().SetSize(2, -1),
+			Spacer().MaxSize(Size{2, Infinite}),
 			shadowRect,
 		),
 	)
 	resizeGesture := DragGesture().OnChanged(func(value Value) {
-		window.resizeWindow(value.translationX, value.translationY)
+		window.resizeWindow(value.translation)
 	}).OnEnded(func(value Value) {
 		window.lastW = 0
 		window.lastH = 0
 	})
 
-	window.titleText = Text(window.title).Foreground(White).Background(Grey).Align(Center).SetSize(-1, -1).Gesture(windowMoveGesture)
+	window.titleText = Text(window.title).Foreground(White).Background(Grey).Align(Center).MaxSize(Size{Infinite, Infinite}).Gesture(windowMoveGesture)
 
 	windowFrame := VStack(
 		HStack(
@@ -156,19 +158,19 @@ func (window *_Window) buildContent() {
 				// Todo
 			}).Foreground(White).Background(Green),
 			window.titleText,
-		).SetSize(-1, 1),
+		).MaxSize(Size{Infinite, 1}),
 		ZStack(
-			Text("").Background(White).Foreground(White).SetSize(-1, -1),
+			Text("").Background(White).Foreground(White).MaxSize(Size{Infinite, Infinite}),
 			window.body,
-			Box(Text("⇲").Background(White).Foreground(Black).Gesture(resizeGesture)).Gravity(Right, Right).SetSize(-1, -1),
+			Box(Text("⇲").Background(White).Foreground(Black).Gesture(resizeGesture)).Gravity(Gravity{Right, Right}).MaxSize(Size{Infinite, Infinite}),
 		))
 
 	realLayer := VStack(
 		HStack(
 			windowFrame,
-			Spacer().SetSize(2, -1),
+			Spacer().MaxSize(Size{2, Infinite}),
 		),
-		Spacer().SetSize(-1, 1),
+		Spacer().MaxSize(Size{Infinite, 1}),
 	)
 
 	// Window view
@@ -176,8 +178,10 @@ func (window *_Window) buildContent() {
 	window.redraw()
 }
 
-func (window *_Window) redraw() {
-	window.staticCanvas = window.render(window.width, window.height)
+func (window *WindowObject) redraw() {
+	var err error
+	window.staticCanvas, err = window.Render()
+	log.Fatal(err)
 	draw_request := &proto.DrawFillRequest{
 		Id:     window.layerId,
 		Width:  window.width,
@@ -188,21 +192,21 @@ func (window *_Window) redraw() {
 	render_request := &proto.RenderRequest{Id: window.layerId}
 	window.app.sendRequest(render_request)
 	window.activeAreas = make([]GestureDescriptor, 0)
-	window.activeAreas = append(window.activeAreas, window.windowContainer.getChildrenGestures(0, 0)...)
+	window.activeAreas = append(window.activeAreas, window.windowContainer.GetChildrenGestures()...)
 }
 
-func (window *_Window) getGestureInPoint(x, y int) Gesture {
+func (window *WindowObject) getGestureInPoint(x, y int) Gesture {
 	for i := len(window.activeAreas) - 1; i >= 0; i-- {
 		area := window.activeAreas[i]
-		if pointInArea(x, y, area) {
-			return area.pointer
+		if area.PointInArea(Point{x, y}) {
+			return area.Pointer
 		}
 	}
 	return nil
 }
 
-func (window *_Window) eventHandler() {
-	window.activeAreas = append(window.activeAreas, window.windowContainer.getChildrenGestures(0, 0)...)
+func (window *WindowObject) eventHandler() {
+	window.activeAreas = append(window.activeAreas, window.windowContainer.GetChildrenGestures()...)
 	for {
 		select {
 		case event := <-window.events:
@@ -235,38 +239,38 @@ func (window *_Window) eventHandler() {
 	}
 }
 
-func (window *_Window) getLogicalSize() (int, int) {
+func (window *WindowObject) getLogicalSize() (int, int) {
 	return window.width, window.height
 }
 
-func (window *_Window) getActualSize() (int, int) {
+func (window *WindowObject) getActualSize() (int, int) {
 	return window.width, window.height
 }
 
-func (window *_Window) getPos() (int, int) {
+func (window *WindowObject) getPos() (int, int) {
 	return window.x, window.y
 }
 
-func (window *_Window) getGesture() Gesture {
+func (window *WindowObject) getGesture() Gesture {
 	return nil
 }
 
-func (window *_Window) hasGesture() bool {
+func (window *WindowObject) hasGesture() bool {
 	return false
 }
 
-func (window *_Window) setPos(x, y int) {
+func (window *WindowObject) setPos(x, y int) {
 	window.x = x
 	window.y = y
 }
 
-func (window *_Window) render(width, height int) [][]proto.Cell {
-	window.windowContainer.setPos(0, 0)
-	return window.windowContainer.render(width, height)
+func (window *WindowObject) Render() (Canvas, error) {
+	window.windowContainer.SetPosition(Point{0, 0})
+	return window.windowContainer.Render()
 }
 
-func Window(title string, body View) *_Window {
-	window := new(_Window)
+func Window(title string, body View) *WindowObject {
+	window := new(WindowObject)
 	window.x = 5
 	window.y = 5
 	window.width = 50

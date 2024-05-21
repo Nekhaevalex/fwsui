@@ -40,6 +40,11 @@ type Point struct {
 	X, Y int // Cartesian coordinates
 }
 
+// Equal - returns true if points' components are equal
+func (point Point) Equal(other Point) bool {
+	return point.X == other.X && point.Y == other.Y
+}
+
 // Translate - translates point with vector and returns it's pointer
 func (point *Point) Translate(vector Vector) *Point {
 	point.X += vector.X
@@ -105,6 +110,10 @@ func (v *Vector) SetComponent(value int, axis Axis) *Vector {
 	return v
 }
 
+func (v Vector) Equal(vector Vector) bool {
+	return v.ToPoint().Equal(vector.ToPoint())
+}
+
 // Add - returns sum of two vectors
 func (vec Vector) Add(other Vector) Vector {
 	return Vector{vec.X + other.X, vec.Y + other.Y}
@@ -112,7 +121,7 @@ func (vec Vector) Add(other Vector) Vector {
 
 // Add - returns substraction of two vectors
 func (vec Vector) Sub(other Vector) Vector {
-	return Vector{vec.X + other.X, vec.Y + other.Y}
+	return Vector{vec.X - other.X, vec.Y - other.Y}
 }
 
 // Mul - returns result of multiplication of integer number and vector
@@ -141,8 +150,14 @@ func (vec Vector) Norm() float64 {
 }
 
 // Project - returns vector projected on axis
+// If axis == Z returns (0, 0)
 func (vec Vector) Project(axis Axis) Vector {
-	return *vec.SetComponent(0, axis.PlaneOrthogonal())
+	switch axis {
+	case X, Y:
+		return *vec.SetComponent(0, axis.PlaneOrthogonal())
+	default:
+		return Vector{0, 0}
+	}
 }
 
 // ToSize - converts vector to Size object
@@ -178,7 +193,7 @@ func (s Size) IsInfinite() (bool, bool) {
 	return s.InfiniteWidth(), s.InfiniteHeight()
 }
 
-func (s Size) IsEqual(other Size) bool {
+func (s Size) Equal(other Size) bool {
 	return s.Width == other.Width && s.Height == other.Height
 }
 
@@ -204,13 +219,6 @@ func (s *Size) SetComponent(value uint, axis Axis) *Size {
 		s.Height = value
 	}
 	return s
-}
-
-// Returns true if inner.dimension <= s.dimension <= outer.dimension for (width, height)
-func (s Size) FitsFrame(inner Size, outer Size) (bool, bool) {
-	width := inner.Width <= s.Width && s.Width <= outer.Width
-	height := inner.Height <= s.Height && s.Height <= outer.Height
-	return width, height
 }
 
 // Converts size to Vector object
