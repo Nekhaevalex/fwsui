@@ -21,6 +21,18 @@ const (
 	Z
 )
 
+// Returns orthogonal axis (X -> Y, Y -> X, Z -> Z)
+func (ax Axis) PlaneOrthogonal() Axis {
+	switch ax {
+	case X:
+		return Y
+	case Y:
+		return X
+	default:
+		return Z
+	}
+}
+
 /******************************************************************************/
 
 // Point - abstract primitive that represents 2D point
@@ -126,6 +138,11 @@ func (vec Vector) Dot(other Vector) int {
 // Norm - returns Euclidian norm of vector
 func (vec Vector) Norm() float64 {
 	return math.Sqrt(float64(vec.X*vec.X + vec.Y*vec.Y))
+}
+
+// Project - returns vector projected on axis
+func (vec Vector) Project(axis Axis) Vector {
+	return *vec.SetComponent(0, axis.PlaneOrthogonal())
 }
 
 // ToSize - converts vector to Size object

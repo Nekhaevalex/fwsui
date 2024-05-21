@@ -80,11 +80,25 @@ func (av *AbstractView) SetSize(size Size) {
 
 // Sets AbstractView minimal size
 func (av *AbstractView) SetMinSize(size Size) {
+	// Increase max size if it is low
+	if size.Height > av.maxSize.Height {
+		av.maxSize.Height = size.Height
+	}
+	if size.Width > av.maxSize.Width {
+		av.maxSize.Width = size.Width
+	}
 	av.minSize = size
 }
 
 // Sets AbstractView maximal size
 func (av *AbstractView) SetMaxSize(size Size) {
+	// Reduce min size if it is low
+	if size.Height < av.minSize.Height {
+		av.minSize.Height = size.Height
+	}
+	if size.Width < av.minSize.Width {
+		av.minSize.Width = size.Width
+	}
 	av.maxSize = size
 }
 
@@ -399,14 +413,14 @@ func (to *TextObject) SetText(s string) *TextObject {
 // Resulted object will contain provided string s with left alignment and empty
 // attributes.
 // Default position is (0, 0).
-// Default minimal size is (length(s), 1)
+// Default size is (length(s), 1)
 // No default gesture provided.
 func Text(s string) *TextObject {
 	text := new(TextObject)
 	text.text = s
 	text.align = Left
 	text.SetPosition(Point{0, 0})
-	text.SetMinSize(Size{uint(utf8.RuneCountInString(s)), 1})
+	text.SetSize(Size{uint(utf8.RuneCountInString(s)), 1})
 	text.SetGesture(nil)
 	return text
 }

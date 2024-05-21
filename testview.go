@@ -9,8 +9,6 @@ func tf() {
 	tfValue := ""
 	textField := TextField(&tfValue, "Input")
 
-	array = append(array, text)
-	array = append(array, button)
-	array = append(array, spacer)
-	array = append(array, textField)
+	stack := AbstractStack(X, text, spacer, button, textField)
+	stack.Render()
 }

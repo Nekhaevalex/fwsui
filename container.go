@@ -2,7 +2,9 @@
 // Also provides basic containers such as Box, HStack, VStack, ZStack
 package fwsui
 
-import proto "github.com/Nekhaevalex/fwsprotocol"
+import (
+	"errors"
+)
 
 // Represents abstract container and it's key attributes such as position, sizes
 // (inherited from AbstractView), gravity, child.
@@ -262,353 +264,146 @@ func (stack *AbstractStackObject) Gravity(gravity Gravity) *AbstractStackObject 
 	return stack
 }
 
-func (stack *AbstractStackObject) Render() (Canvas, error) {
+func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
+	// Allocate canvas
 	canvas, error := AllocateCanvas(stack.GetActualSize())
 	if error != nil {
 		return nil, error
 	}
 
-}
-
-type _HStack struct {
-	x, y, width, height int
-	awidth, aheight     int
-	padding             int
-	gravityX            Align
-	gravityY            Align
-	children            []View
-}
-
-// getGesture implements View.
-func (*_HStack) getGesture() Gesture {
-	return nil
-}
-
-// hasGesture implements View.
-func (*_HStack) hasGesture() bool {
-	return false
-}
-
-func (hstack *_HStack) getLogicalSize() (int, int) {
-	return hstack.width, hstack.height
-}
-
-func (hstack *_HStack) getActualSize() (int, int) {
-	return hstack.awidth, hstack.aheight
-}
-
-func (hstack *_HStack) setPos(x, y int) {
-	hstack.x = x
-	hstack.y = y
-}
-
-func (hstack *_HStack) getPos() (int, int) {
-	return hstack.x, hstack.y
-}
-
-func (hstack *_HStack) render(width, height int) [][]proto.Cell {
-	hstack.awidth = width
-	hstack.aheight = height
-	// get total fixed size over X axis, maximal size over Y axis and fixed size elements amount
-	total_fixed_size_X := 0
-	max_size_Y := 0
-	fixed_size_amount := 0
-	for _, child := range hstack.children {
-		x, y := child.getLogicalSize()
-		if x > 0 {
-			total_fixed_size_X += x
-			fixed_size_amount += 1
-		}
-		max_size_Y = max(max_size_Y, y)
-	}
-	if height < 0 {
-		height = max_size_Y
-	}
-	// calculating horizontal space per floating object
-	floating_objects_amount := len(hstack.children) - fixed_size_amount
-	free_space_per_obj := 0
-	if floating_objects_amount > 0 {
-		free_space_per_obj = (width - total_fixed_size_X - (len(hstack.children)+1)*hstack.padding) / floating_objects_amount
-	}
-	max_x := min(width, total_fixed_size_X+floating_objects_amount*free_space_per_obj)
-	canvas := allocateCanvas(width, height)
-	x := hstack.padding
-	y := 0
-	for _, child := range hstack.children {
-		w, h := child.getLogicalSize()
-		if w < 0 {
-			w = free_space_per_obj
-		}
-		if h < 0 {
-			h = height
-		}
-		box := Box(child)
-		box.gravityX = hstack.gravityX
-		box.gravityY = hstack.gravityY
-		box.setPos(x, y)
-		sub_frame := box.render(w, h)
-		for ix := x; ix < min(max_x, x+w); ix++ {
-			for iy := y; iy < h; iy++ {
-				canvas[ix][iy] = sub_frame[ix-x][iy-y]
+	// Standard value checks
+	// 1. Check if all sizes are fixed
+	allFixedCheck := func() bool {
+		fixedChildren := 0
+		for _, child := range stack.children {
+			if child.IsFixedSize() {
+				fixedChildren++
 			}
 		}
-		x += (w + hstack.padding)
+		return fixedChildren == len(stack.children)
 	}
-	return canvas
-}
 
-func (hstack *_HStack) getChildrenGestures(x, y int) []GestureDescriptor {
-	actors := make([]GestureDescriptor, 0)
-	for _, child := range hstack.children {
-		if child.hasGesture() {
-			actors = append(actors, child.getGesture().getGestureDescriptor(hstack.x, hstack.y))
+	// Solving along stack axis
+	solveConstraintsAlongAxis := func() {
+		// Solving with Kuruzov's method:
+		// x_i = x_i^lower + (x_i^upper - x_i^lower) * alpha
+		// alpha = (x^upper - sum_i x_i^lower) / sum_i (x_i^upper - x_i^lower)
+
+		// Calculating alpha
+		// retrieving xUpper from stack end subtracting padding space
+		// We also assume that actual size of stack was already evaluated
+		xUpper := int(stack.GetActualSize().GetComponent(stack.axis)) - (stack.padding * (len(stack.children) - 1))
+		// upper sum
+		sum1 := 0
+		for _, child := range stack.children {
+			xILower := child.GetMinSize().GetComponent(stack.axis)
+			sum1 += int(xILower)
 		}
-		if asserted, ok := child.(Container); ok {
-			actors = append(actors, asserted.getChildrenGestures(hstack.x, hstack.y)...)
+		// lower sum
+		sum2 := 0
+		for _, child := range stack.children {
+			xIUpper := child.GetMaxSize().GetComponent(stack.axis)
+			xILower := child.GetMinSize().GetComponent(stack.axis)
+			diff := xIUpper - xILower
+			sum2 += int(diff)
+		}
+		alpha := (xUpper - sum1) / sum2
+
+		// Calculating x_i/y_i
+		for _, child := range stack.children {
+			xIUpper := child.GetMaxSize().GetComponent(stack.axis)
+			xILower := child.GetMinSize().GetComponent(stack.axis)
+			xI := xILower + (xIUpper-xILower)*uint(alpha)
+			actualSize := Size{0, 0}
+			actualSize.SetComponent(xI, stack.axis)
+
+			yI := min(
+				stack.GetActualSize().GetComponent(stack.axis.PlaneOrthogonal()),
+				child.GetMaxSize().GetComponent(stack.axis.PlaneOrthogonal()),
+			)
+			yI = max(yI, child.GetMinSize().GetComponent(stack.axis.PlaneOrthogonal()))
+			actualSize.SetComponent(yI, stack.axis.PlaneOrthogonal())
 		}
 	}
-	return actors
-}
 
-func (hstack *_HStack) Padding(padding int) *_HStack {
-	hstack.padding = padding
-	return hstack
-}
-
-func (hstack *_HStack) SetSize(x, y int) *_HStack {
-	hstack.width = x
-	hstack.height = y
-	return hstack
-}
-
-func (hstack *_HStack) Gravity(x, y Align) *_HStack {
-	hstack.gravityX = x
-	hstack.gravityY = y
-	return hstack
-}
-
-func (hstack *_HStack) AddView(view View) *_HStack {
-	hstack.children = append(hstack.children, view)
-	return hstack
-}
-
-func HStack(children ...View) *_HStack {
-	hstack := new(_HStack)
-	hstack.children = children
-	hstack.x = 0
-	hstack.y = 0
-	hstack.width = -1
-	hstack.height = -1
-	hstack.padding = 0
-	hstack.gravityX = Center
-	hstack.gravityY = Center
-	return hstack
-}
-
-type _VStack struct {
-	x, y, width, height int
-	awidth, aheight     int
-	padding             int
-	gravityX            Align
-	gravityY            Align
-	children            []View
-}
-
-// getGesture implements View.
-func (*_VStack) getGesture() Gesture {
-	return nil
-}
-
-// hasGesture implements View.
-func (*_VStack) hasGesture() bool {
-	return false
-}
-
-func (vstack *_VStack) getLogicalSize() (int, int) {
-	return vstack.width, vstack.height
-}
-
-func (vstack *_VStack) getActualSize() (int, int) {
-	return vstack.awidth, vstack.aheight
-}
-
-func (vstack *_VStack) setPos(x, y int) {
-	vstack.x = x
-	vstack.y = y
-}
-
-func (vstack *_VStack) getPos() (int, int) {
-	return vstack.x, vstack.y
-}
-
-func (vstack *_VStack) render(width, height int) [][]proto.Cell {
-	vstack.awidth = width
-	vstack.aheight = height
-	// get total fixed size over X axis, maximal size over Y axis and fixed size elements amount
-	total_fixed_size_Y := 0
-	max_size_X := 0
-	fixed_size_amount := 0
-	for _, child := range vstack.children {
-		x, y := child.getLogicalSize()
-		if y > 0 {
-			total_fixed_size_Y += y
-			fixed_size_amount += 1
-		}
-		max_size_X = max(max_size_X, x)
+	// Solving if needed
+	if !allFixedCheck() {
+		solveConstraintsAlongAxis()
 	}
-	if width < 0 {
-		width = max_size_X
-	}
-	// calculating horizontal space per floating object
-	floating_objects_amount := len(vstack.children) - fixed_size_amount
-	free_space_per_obj := 0
-	if floating_objects_amount > 0 {
-		free_space_per_obj = (height - total_fixed_size_Y - len(vstack.children)*vstack.padding) / floating_objects_amount
-	}
-	max_y := min(height, total_fixed_size_Y+floating_objects_amount*free_space_per_obj)
-	canvas := allocateCanvas(width, height)
-	y := vstack.padding
-	x := 0
-	for _, child := range vstack.children {
-		_, h := child.getLogicalSize()
-		if h < 0 {
-			h = free_space_per_obj
-		}
-		w := width
+
+	// With all actual sizes now known we need to solve gravity
+	// Solving it with boxes
+	// Translation vector
+	tVector := Vector{0, 0}
+	paddingVector := Vector{0, 0}
+	paddingVector.SetComponent(stack.padding, stack.axis)
+	for _, child := range stack.children {
 		box := Box(child)
-		box.gravityX = vstack.gravityX
-		box.gravityY = vstack.gravityY
-		box.setPos(x, y)
-		sub_frame := box.render(w, h)
-		for ix := x; ix < w; ix++ {
-			for iy := y; iy < min(max_y, y+h); iy++ {
-				canvas[ix][iy] = sub_frame[ix-x][iy-y]
+		box.SetSize(child.GetActualSize())
+		box.SetGravity(stack.GetGravity())
+		box.SetPosition(Point(tVector))
+		tVector.Add(child.GetActualSize().ToVector().Project(stack.axis)).Add(paddingVector)
+		// Render stage
+		childCanvas, error := box.Render()
+		if error != nil {
+			return nil, error
+		}
+
+		childFrame := child.GetFrame().Cut(*stack.GetFrame())
+		startX, endX := childFrame.GetStartEnd(X)
+		startY, endY := childFrame.GetStartEnd(Y)
+
+		for x := startX; x < endX; x++ {
+			for y := startY; y < endY; y++ {
+				canvas[x][y] = childCanvas[x-child.GetPosition().X][y-child.GetPosition().Y]
 			}
 		}
-		y += (h + vstack.padding)
 	}
-	return canvas
+
+	return canvas, nil
 }
 
-func (vstack *_VStack) getChildrenGestures(x, y int) []GestureDescriptor {
-	actors := make([]GestureDescriptor, 0)
-	for _, child := range vstack.children {
-		if child.hasGesture() {
-			actors = append(actors, child.getGesture().getGestureDescriptor(vstack.x, vstack.y))
-		}
-		if asserted, ok := child.(Container); ok {
-			actors = append(actors, asserted.getChildrenGestures(vstack.x, vstack.y)...)
-		}
+func (stack *AbstractStackObject) renderZStack() (Canvas, error) {
+	canvas, error := AllocateCanvas(stack.GetActualSize())
+	if error != nil {
+		return nil, error
 	}
-	return actors
-}
-
-func (vstack *_VStack) Padding(padding int) *_VStack {
-	vstack.padding = padding
-	return vstack
-}
-
-func (vstack *_VStack) SetSize(x, y int) *_VStack {
-	vstack.width = x
-	vstack.height = y
-	return vstack
-}
-
-func (vstack *_VStack) Gravity(x, y Align) *_VStack {
-	vstack.gravityX = x
-	vstack.gravityY = y
-	return vstack
-}
-
-func (vstack *_VStack) AddView(view View) *_VStack {
-	vstack.children = append(vstack.children, view)
-	return vstack
-}
-
-func VStack(children ...View) *_VStack {
-	vstack := new(_VStack)
-	vstack.children = children
-	vstack.x = 0
-	vstack.y = 0
-	vstack.width = -1
-	vstack.height = -1
-	vstack.padding = 0
-	vstack.gravityX = Center
-	vstack.gravityY = Center
-	return vstack
-}
-
-type _ZStack struct {
-	x, y, width, height int
-	gravityX, gravityY  Align
-	children            []View
-}
-
-// getGesture implements View.
-func (*_ZStack) getGesture() Gesture {
-	return nil
-}
-
-// hasGesture implements View.
-func (*_ZStack) hasGesture() bool {
-	return false
-}
-
-func (zstack *_ZStack) getLogicalSize() (int, int) {
-	return zstack.width, zstack.height
-}
-
-func (zstack *_ZStack) getActualSize() (int, int) {
-	return zstack.width, zstack.height
-}
-
-func (zstack *_ZStack) getPos() (int, int) {
-	return zstack.x, zstack.y
-}
-
-func (zstack *_ZStack) setPos(x, y int) {
-	zstack.x = x
-	zstack.y = y
-}
-
-func (zstack *_ZStack) render(width, height int) [][]proto.Cell {
-	canvas := allocateCanvas(width, height)
-	for _, child := range zstack.children {
+	for _, child := range stack.children {
 		boxed := Box(child)
-		boxed.gravityX = zstack.gravityX
-		boxed.gravityY = zstack.gravityY
-		boxed.setPos(zstack.x, zstack.y)
-		layer := boxed.render(width, height)
-		for i := 0; i < width; i++ {
-			for j := 0; j < height; j++ {
-				canvas[i][j] = layer[i][j].Over(canvas[i][j])
+		boxed.SetGravity(stack.GetGravity())
+		boxed.SetPosition(stack.GetPosition())
+		layer, error := boxed.Render()
+		if error != nil {
+			return nil, error
+		}
+		for x := 0; x < int(stack.actualSize.Width); x++ {
+			for y := 0; y < int(stack.actualSize.Height); y++ {
+				canvas[x][y] = layer[x][y].Over(canvas[x][y])
 			}
 		}
 	}
-	return canvas
+	return canvas, nil
 }
 
-func (zstack *_ZStack) getChildrenGestures(x, y int) []GestureDescriptor {
-	actors := make([]GestureDescriptor, 0)
-	for _, child := range zstack.children {
-		if child.hasGesture() {
-			actors = append(actors, child.getGesture().getGestureDescriptor(zstack.x, zstack.y))
-		}
-		if asserted, ok := child.(Container); ok {
-			actors = append(actors, asserted.getChildrenGestures(zstack.x, zstack.y)...)
-		}
+func (stack *AbstractStackObject) Render() (Canvas, error) {
+	switch stack.axis {
+	case X, Y:
+		return stack.renderPlaneStack()
+	case Z:
+		return stack.renderZStack()
+	default:
+		return nil, errors.New("impossible axis provided")
 	}
-	return actors
 }
 
-func ZStack(children ...View) *_ZStack {
-	zstack := new(_ZStack)
-	zstack.children = children
-	zstack.x = 0
-	zstack.y = 0
-	zstack.width = -1
-	zstack.height = -1
-	zstack.gravityX = Center
-	zstack.gravityY = Center
-	return zstack
+func HStack(children ...View) *AbstractStackObject {
+	return AbstractStack(X, children...)
+}
+
+func VStack(children ...View) *AbstractStackObject {
+	return AbstractStack(Y, children...)
+}
+
+func ZStack(children ...View) *AbstractStackObject {
+	return AbstractStack(Z, children...)
 }

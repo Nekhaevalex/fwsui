@@ -25,7 +25,8 @@ type Gesture interface {
 
 // Clicks
 type _AClickGesture struct {
-	x, y, width, height          int
+	Position                     Point
+	Size                         Size
 	mouseButton                  termbox.Key
 	count, current_count         int
 	descriptor                   GestureDescriptor
@@ -36,17 +37,15 @@ type _AClickGesture struct {
 }
 
 func (click *_AClickGesture) setParentViewSizes(v View) {
-	click.x, click.y = v.getPos()
-	click.width, click.height = v.getActualSize()
+	click.Position = v.GetPosition()
+	click.Size = v.GetActualSize()
 }
 
-func (click *_AClickGesture) getGestureDescriptor(x, y int) GestureDescriptor {
+func (click *_AClickGesture) GetGestureDescriptor() GestureDescriptor {
 	descriptor := GestureDescriptor{
-		x:       click.x + x,
-		y:       click.y + y,
-		width:   click.width,
-		height:  click.height,
-		pointer: click,
+		Position: click.Position,
+		Size:     click.Size,
+		Pointer:  click,
 	}
 	click.descriptor = descriptor
 	return descriptor
@@ -158,13 +157,11 @@ type _DragGesture struct {
 	altGesture                   Gesture
 }
 
-func (drag *_DragGesture) getGestureDescriptor(x, y int) GestureDescriptor {
+func (drag *_DragGesture) GetGestureDescriptor() GestureDescriptor {
 	descriptor := GestureDescriptor{
-		x:       drag.x + x,
-		y:       drag.y + y,
-		width:   drag.width,
-		height:  drag.height,
-		pointer: drag,
+		Position: Point{drag.x, drag.y},
+		Size:     Size{uint(drag.width), uint(drag.height)},
+		Pointer:  drag,
 	}
 	drag.descriptor = descriptor
 	return descriptor
