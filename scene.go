@@ -62,14 +62,17 @@ func (scene *AbstractScene) Move(translation Vector) {
 }
 
 func (scene *AbstractScene) Resize(size Size) {
-	scene.Content.SetActualSize(size)
-	resizeRequest := &proto.ResizeRequest{
-		Id:     scene.LayerID,
-		Width:  int(scene.Content.GetActualSize().Width),
-		Height: int(scene.Content.GetActualSize().Height),
+	if size.Width >= 10 && size.Height >= 3 {
+		scene.Content.SetActualSize(size)
+		resizeRequest := &proto.ResizeRequest{
+			Id:     scene.LayerID,
+			Width:  int(scene.Content.GetActualSize().Width),
+			Height: int(scene.Content.GetActualSize().Height),
+		}
+		scene.App.sendRequest(resizeRequest)
+		scene.Redraw()
+		scene.RegisterActiveAreas()
 	}
-	scene.App.sendRequest(resizeRequest)
-	scene.Redraw()
 }
 
 func (scene AbstractScene) Redraw() {
@@ -159,10 +162,10 @@ func Window(title string, content View) *WindowObject {
 		window.lastShift = Vector{0, 0}
 	})
 	resizeGesture := DragGesture().OnChanged(func(value Value) {
-		log.Printf("resizeGesture detected: %v", value)
-		calced := value.Translation.Sub(window.lastShift)
-		newActSize := window.content.GetActualSize().ToVector().Add(calced)
-		window.Resize(newActSize.ToSize())
+		oldSize := window.Content.GetActualSize().ToVector()
+		shift := value.Translation.Sub(window.lastShift)
+		newActSize := oldSize.Add(shift).ToSize()
+		window.Resize(newActSize)
 		window.lastShift = value.Translation
 	}).OnEnded(func(value Value) {
 		window.lastShift = Vector{0, 0}
