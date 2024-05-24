@@ -26,13 +26,13 @@ type AbstractContainer struct {
 
 // Recursively gets GestureDescriptor of child view for mapping child elements gestures.
 // It is required for building map of active areas.
-func (ac AbstractContainer) GetChildrenGestures() []GestureDescriptor {
+func (ac AbstractContainer) GetChildrenGestures() []ActiveArea {
 	// allocating descriptor storage
-	descriptors := make([]GestureDescriptor, 0, 1)
+	descriptors := make([]ActiveArea, 0, 1)
 	for _, child := range ac.children {
 		// each child is view and implements HasGesture method.
 		if child.HasGesture() {
-			childDescriptor := child.GetGesture().GetGestureDescriptor()
+			childDescriptor := child.GetGesture().GetGestureDescriptor(child)
 			childDescriptor.Position.Translate(Vector(ac.position))
 			descriptors = append(descriptors, childDescriptor)
 		}
@@ -73,9 +73,10 @@ func (ac AbstractContainer) ApplyChildrenGravity() {
 // gestures must be mapped for quick gesture position identification.
 // Hence container must implement GetChildrenGestures which recursively map gestures.
 type Container interface {
-	GetChildrenGestures() []GestureDescriptor // Recursively gets GestureDescriptor of child view for mapping child elements gestures.
+	GetChildrenGestures() []ActiveArea // Recursively gets GestureDescriptor of child view for mapping child elements gestures.
 	GetGravity() Gravity
 	SetGravity(gravity Gravity)
+	Render() (Canvas, error)
 }
 
 // Represents Box object with single child.

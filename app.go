@@ -2,6 +2,8 @@ package fwsui
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -12,7 +14,7 @@ import (
 	proto "github.com/Nekhaevalex/fwsprotocol"
 )
 
-type _App struct {
+type AppObject struct {
 	pid              int
 	windowServerConn net.Conn
 	scenes           map[proto.ID]Scene
@@ -24,23 +26,23 @@ type _App struct {
 	quit             chan int
 }
 
-func (app *_App) establishConnection() {
+func (app *AppObject) establishConnection() {
+	app.pid = os.Getpid()
 	conn, err := net.Dial("unix", proto.FWS_SOCKET)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.Join(fmt.Errorf("app %d failed to connect to fws", app.pid), err))
 	}
 	app.windowServerConn = conn
-	app.pid = os.Getpid()
 	pid_cache := make([]byte, 4)
 	binary.LittleEndian.PutUint32(pid_cache, uint32(app.pid))
 	_, err = conn.Write(pid_cache)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.Join(fmt.Errorf("app %d failed sending pid to fws", app.pid), err))
 	}
 	rdy := make([]byte, 10)
 	b, err := conn.Read(rdy)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.Join(fmt.Errorf("app %d failed recieving ready state from fws", app.pid), err))
 	}
 	str1 := string(rdy[:b])
 	if str1 != "READY" {
@@ -48,7 +50,7 @@ func (app *_App) establishConnection() {
 	}
 }
 
-func (app *_App) sendRequest(request proto.Request) proto.ID {
+func (app *AppObject) sendRequest(request proto.Request) proto.ID {
 	app.requestActive = true
 	defer func() {
 		app.requestActive = false
@@ -111,7 +113,7 @@ func (app *_App) sendRequest(request proto.Request) proto.ID {
 	}
 }
 
-func (app *_App) incomingMessagesHandler() {
+func (app *AppObject) incomingMessagesHandler() {
 	// Event catcher
 	app.eventCatcherFl = true
 	defer func() { app.eventCatcherFl = false }()
@@ -134,7 +136,7 @@ func (app *_App) incomingMessagesHandler() {
 			// It's event and must be send to window handler
 			go func() {
 				lId := typed_request.Id
-				channel := app.scenes[lId].getEventChannel()
+				channel := app.scenes[lId].GetEventChannel()
 				channel <- typed_request
 			}()
 		default:
@@ -149,39 +151,53 @@ func (app *_App) incomingMessagesHandler() {
 	}
 }
 
-func (app *_App) setInput(channel *chan *proto.EventRequest) {
+func (app *AppObject) setInput(channel *chan *proto.EventRequest) {
 	app.keyInputChan = channel
 }
 
-func (app *_App) OpenWindow(window Scene) {
-	window.bindApp(app)
-	lid := window.requestLayerId()
+func (app *AppObject) OpenWindow(window Scene) {
+	window.BindApp(app)
+	lid := window.RequestLayerID()
 	app.scenes[lid] = window
 	// Initial render
-	app.scenes[lid].buildContent()
-	go app.scenes[lid].eventHandler()
+	app.scenes[lid].Move(Vector{5, 5})
+	app.scenes[lid].Resize(Size{30, 10})
+	canvas, err := app.scenes[lid].Render()
+	if err != nil {
+		log.Fatal(errors.Join(fmt.Errorf("failed to complete initial render of scene %d", lid)), err)
+	}
+	app.scenes[lid].SendRender(canvas)
+	app.scenes[lid].Redraw()
+	// Create event channel
+	app.scenes[lid].GetEventChannel()
+	// Raise event handler
+	go app.scenes[lid].EventHandler()
 }
 
-func (app *_App) Quit() {
+func (app *AppObject) Quit() {
 	app.quit <- 1
 }
 
-var appInstance *_App
+var appInstance *AppObject
 var once sync.Once
 
-func AppInstance() *_App {
+func AppInstance() *AppObject {
 	return appInstance
 }
 
-func App(initialScene ...Scene) *_App {
+func App(initialScene ...Scene) *AppObject {
 	once.Do(func() {
-		appInstance = new(_App)
+		appInstance = new(AppObject)
 		appInstance.scenes = make(map[proto.ID]Scene)
 		appInstance.quit = make(chan int)
 		appInstance.eventCatcherFl = false
 		appInstance.forwardReplies = make([]proto.Msg, 0)
 		appInstance.establishConnection()
 	})
+	defer func() {
+		log.Printf("Closing connection")
+		appInstance.windowServerConn.Close()
+	}()
 	for _, window := range initialScene {
 		appInstance.OpenWindow(window)
 	}

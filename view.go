@@ -115,7 +115,17 @@ func (av *AbstractView) SetSizeInterval(sizeInterval SizeInterval) {
 
 // Sets AbstractView maximal size
 func (av *AbstractView) SetActualSize(size Size) {
-	av.actualSize = size
+	// Check if actual size does not exceed min/max sizes
+	assignSizeAxis := func(axis Axis) uint {
+		return min(
+			max(
+				size.GetComponent(axis),
+				av.GetMinSize().GetComponent(axis),
+			),
+			av.GetMaxSize().GetComponent(axis),
+		)
+	}
+	av.actualSize = Size{assignSizeAxis(X), assignSizeAxis(Y)}
 }
 
 // Returns true if View contains binded Gesture
@@ -128,7 +138,7 @@ func (av AbstractView) GetGesture() Gesture {
 	return av.gesture
 }
 
-// Sets AV's Gesture
+// Adds new AV's Gesture
 func (av *AbstractView) SetGesture(gesture Gesture) {
 	av.gesture = gesture
 }
@@ -187,6 +197,7 @@ func Rectangle(size Size) *RectangleObject {
 	rect := new(RectangleObject)
 	rect.SetPosition(Point{0, 0})
 	rect.SetMinSize(size)
+	rect.SetMaxSize(Size{Infinite, Infinite})
 	rect.SetGesture(nil)
 	return rect
 }
@@ -434,7 +445,6 @@ func Text(s string) *TextObject {
 	text.align = Left
 	text.SetPosition(Point{0, 0})
 	text.SetSize(Size{uint(utf8.RuneCountInString(s)), 1})
-	text.SetGesture(nil)
 	return text
 }
 
@@ -554,13 +564,10 @@ func Button(s string, action func(outlet *ButtonObject)) *ButtonObject {
 		}
 	}).OnEnded(func(inside bool) {
 		if inside {
-			buttonUnpressed()
-			button.pressed = false
 			action(button)
-		} else {
-			buttonUnpressed()
-			button.pressed = false
 		}
+		buttonUnpressed()
+		button.pressed = false
 	})
 
 	button.Gesture(buttonClickGesture)
@@ -723,8 +730,8 @@ func TextField(text *string, prompt string) *TextFieldObject {
 			textfield.enableInput()
 			go textfield.handleEvent()
 		}
-		sel1 := min(max(0, value.startPosition.X-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
-		sel2 := min(max(0, value.startPosition.Y-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
+		sel1 := min(max(0, value.StartPosition.X-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
+		sel2 := min(max(0, value.StartPosition.Y-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
 		textfield.typeIndex = min(sel1, sel2)
 		textfield.selectIndex = max(sel1, sel2)
 	}).OnEnded(func(value Value) {

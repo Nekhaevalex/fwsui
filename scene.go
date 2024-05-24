@@ -1,286 +1,292 @@
 package fwsui
 
 import (
+	"errors"
 	"log"
 
 	proto "github.com/Nekhaevalex/fwsprotocol"
 	"github.com/nsf/termbox-go"
 )
 
-// Scene – interface for implementing standalone objects that can be shown on
-// screen and handle incomming events
+// Represents abstract scene object.
+type AbstractScene struct {
+	Position       Point
+	LayerID        proto.ID
+	App            *AppObject
+	Content        View
+	ActiveAreas    []ActiveArea
+	CurrentGesture Gesture
+	Events         chan *proto.EventRequest
+	Quit           chan int
+}
+
+func (scene *AbstractScene) BindApp(app *AppObject) {
+	scene.App = app
+	log.Printf("Scene %v binded to app with pid %d\n", scene, app.pid)
+}
+
+func (scene *AbstractScene) RequestLayerID() proto.ID {
+	if scene.App == nil {
+		log.Fatal("AppObject pointer nil")
+	}
+	// Construct initial window creations request
+	new_window_request := &proto.NewWindowRequest{
+		Pid:    scene.App.pid,
+		X:      scene.Position.X,
+		Y:      scene.Position.Y,
+		Width:  int(scene.Content.GetActualSize().Width),
+		Height: int(scene.Content.GetActualSize().Height),
+	}
+	scene.LayerID = scene.App.sendRequest(new_window_request)
+	return scene.LayerID
+}
+
+func (scene *AbstractScene) GetEventChannel() chan *proto.EventRequest {
+	if scene.Events == nil {
+		scene.Events = make(chan *proto.EventRequest)
+	}
+	return scene.Events
+}
+
+func (scene *AbstractScene) Move(translation Vector) {
+	moveRequest := &proto.MoveRequest{
+		Id: scene.LayerID,
+		X:  translation.X,
+		Y:  translation.Y,
+	}
+
+	scene.App.sendRequest(moveRequest)
+	render := &proto.RenderRequest{Id: scene.LayerID}
+	scene.App.sendRequest(render)
+	scene.Position.Translate(translation)
+}
+
+func (scene *AbstractScene) Resize(size Size) {
+	scene.Content.SetActualSize(size)
+	resizeRequest := &proto.ResizeRequest{
+		Id:     scene.LayerID,
+		Width:  int(scene.Content.GetActualSize().Width),
+		Height: int(scene.Content.GetActualSize().Height),
+	}
+	scene.App.sendRequest(resizeRequest)
+	scene.Redraw()
+}
+
+func (scene AbstractScene) Redraw() {
+	render := &proto.RenderRequest{Id: scene.LayerID}
+	scene.App.sendRequest(render)
+}
+
+func (scene AbstractScene) Render() (Canvas, error) {
+	canvas, err := scene.Content.Render()
+	if err != nil {
+		return nil, errors.Join(errors.New("AbstractScene was not able to render content"), err)
+	}
+	return canvas, err
+}
+
+func (scene AbstractScene) SendRender(canvas Canvas) {
+	draw_request := &proto.DrawFillRequest{
+		Id:     scene.LayerID,
+		Width:  int(scene.Content.GetActualSize().Width),
+		Height: int(scene.Content.GetActualSize().Height),
+		Img:    canvas,
+	}
+	scene.App.sendRequest(draw_request)
+}
+
+func (scene *AbstractScene) RegisterActiveAreas() {
+	scene.ActiveAreas = make([]ActiveArea, 0)
+	container, ok := scene.Content.(Container)
+	if ok {
+		scene.ActiveAreas = append(scene.ActiveAreas, container.GetChildrenGestures()...)
+	} else {
+		scene.ActiveAreas = append(scene.ActiveAreas, scene.Content.GetGesture().GetGestureDescriptor(scene.Content))
+	}
+}
+
+func (scene *AbstractScene) FindGesture(event MouseEvent) Gesture {
+	if scene.ActiveAreas == nil {
+		log.Fatal("ActiveAreas is nil")
+	}
+	for _, area := range scene.ActiveAreas {
+		if area.EventInArea(event) {
+			return area.Gesture
+		}
+	}
+	return nil
+}
+
+// Scene – interface for implementing multiple standalone objects that can be
+// shown on screen and handle incomming events
+// Unlike Container, Scene is not View
+// Scene communicates with window server
 type Scene interface {
-	bindApp(app *_App)                         // Method for saving pointer of App instance
-	requestLayerId() proto.ID                  // Method for requesting new layer ID from Window Server
-	getEventChannel() chan *proto.EventRequest // Method for returning events incomming connection
-	buildContent()                             // Method for building contained views
-	eventHandler()                             // Handler for incomming events
+	BindApp(app *AppObject)                    // Method for saving pointer of App instance
+	RequestLayerID() proto.ID                  // Method for requesting new layer ID from Window Server
+	GetEventChannel() chan *proto.EventRequest // Method for returning events incomming connection
+	EventHandler()                             // Handler for incomming events
+	// Typical canvas routines
+	Resize(size Size)         // Resize scene
+	Move(translation Vector)  // Move scene without render
+	Redraw()                  // Force rendraw scene without render
+	Render() (Canvas, error)  // Render scene
+	SendRender(canvas Canvas) // Send canvas to window server
+	RegisterActiveAreas()     // Builds ActiveAreas
 }
 
 type WindowObject struct {
-	// Main values
-	x, y, width, height int
-	app                 *_App
-	layerId             proto.ID
-	title               string
-	activeAreas         []GestureDescriptor
-	events              chan *proto.EventRequest
-	quit                chan int
-	background          proto.Color
-	body                View
-	windowContainer     *AbstractStackObject
-	staticCanvas        Canvas
-	prevMouse           prevGesture
-	lastX, lastY        int
-	lastW, lastH        int
-	onCloseFunc         func()
-	titleText           *TextObject
+	AbstractScene
+	title      string
+	titleText  *TextObject
+	content    View
+	lastShift  Vector
+	onClose    func()
+	onMinimize func()
+	onMaximize func()
 }
 
-func (window *WindowObject) Close() {
-	delete(window.app.scenes, window.layerId)
-	delete_request := &proto.DeleteRequest{Id: window.layerId}
-	window.app.sendRequest(delete_request)
-	window.onCloseFunc()
-	window.quit <- 1
-}
+func Window(title string, content View) *WindowObject {
+	window := new(WindowObject)
+	window.title = title
+	window.content = content
+	// Building window
+	// Gestures
+	windowMoveGesture := DragGesture().OnChanged(func(value Value) {
+		window.Move(value.Translation.Sub(window.lastShift))
+		window.lastShift = value.Translation
+	}).OnEnded(func(value Value) {
+		window.lastShift = Vector{0, 0}
+	})
+	resizeGesture := DragGesture().OnChanged(func(value Value) {
+		log.Printf("resizeGesture detected: %v", value)
+		calced := value.Translation.Sub(window.lastShift)
+		newActSize := window.content.GetActualSize().ToVector().Add(calced)
+		window.Resize(newActSize.ToSize())
+		window.lastShift = value.Translation
+	}).OnEnded(func(value Value) {
+		window.lastShift = Vector{0, 0}
+	})
+	// Items
+	window.titleText = Text(window.title).
+		Foreground(White).
+		Background(Grey).
+		Align(Center).
+		MaxSize(Size{Infinite, Infinite}).
+		Gesture(windowMoveGesture)
+	// Window itself
+	window.Content = VStack(
+		HStack(
+			Button("X", func(outlet *ButtonObject) {
+				log.Printf("X detected")
+				if window.onClose != nil {
+					window.onClose()
+				}
+			}).
+				Foreground(White).
+				Background(Red),
 
-func (window *WindowObject) OnClose(closeFunc func()) *WindowObject {
-	window.onCloseFunc = closeFunc
+			Button("-", func(outlet *ButtonObject) {
+				log.Printf("- detected")
+				if window.onMinimize != nil {
+					window.onMinimize()
+				}
+			}).
+				Foreground(Grey).
+				Background(Yellow),
+
+			Button("+", func(outlet *ButtonObject) {
+				log.Printf("+ detected")
+				if window.onMaximize != nil {
+					window.onMaximize()
+				}
+			}).
+				Foreground(White).
+				Background(Green),
+			window.titleText,
+		).
+			MaxSize(Size{Infinite, 1}),
+		ZStack(
+			Rectangle(Size{1, 1}),
+			window.content,
+			Box(
+				Text(">>>").
+					Foreground(Black).
+					Background(White).
+					Gesture(resizeGesture),
+			).
+				Gravity(Gravity{Right, Bottom}).
+				MaxSize(Size{Infinite, Infinite}),
+		),
+	)
 	return window
 }
 
-func (window *WindowObject) SetSize(width, height int) *WindowObject {
-	window.width = width
-	window.height = height
+func (window *WindowObject) OnClose(action func()) *WindowObject {
+	window.onClose = func() {
+		delete(window.App.scenes, window.LayerID)
+		delete_request := &proto.DeleteRequest{Id: window.LayerID}
+		window.App.sendRequest(delete_request)
+		action()
+		window.Quit <- 1
+	}
 	return window
 }
 
 func (window *WindowObject) SetTitle(s string) *WindowObject {
 	window.title = s
-	if window.windowContainer != nil {
+	if window.Content != nil {
 		window.titleText.SetText(s)
 	}
 	return window
 }
 
-func (window *WindowObject) bindApp(app *_App) {
-	window.app = app
+func (window *WindowObject) SetSize(size Size) *WindowObject {
+	window.Content.SetActualSize(size)
+	return window
 }
 
-func (window *WindowObject) requestLayerId() proto.ID {
-	// Construct initial window creations request
-	new_window_request := &proto.NewWindowRequest{
-		Pid:    window.app.pid,
-		X:      window.x,
-		Y:      window.y,
-		Width:  window.width,
-		Height: window.height,
-	}
-	window.layerId = window.app.sendRequest(new_window_request)
-	return window.layerId
-}
-
-func (window *WindowObject) getEventChannel() chan *proto.EventRequest {
-	return window.events
-}
-
-func (window *WindowObject) moveWindow(translation Vector) {
-	moveRequest := &proto.MoveRequest{
-		Id: window.layerId,
-		X:  translation.X - window.lastX,
-		Y:  translation.Y - window.lastY,
-	}
-	window.app.sendRequest(moveRequest)
-	render := &proto.RenderRequest{Id: window.layerId}
-	window.app.sendRequest(render)
-	// window.lastX = translationX
-	// window.lastY = translationY
-	window.lastX = translation.X
-	window.lastY = translation.Y
-}
-
-func (window *WindowObject) resizeWindow(translation Vector) {
-	resulsW := window.width + translation.X - window.lastW
-	resulsH := window.height + translation.Y - window.lastH
-	if resulsW > 15 && resulsH > 5 {
-		window.width = resulsW
-		window.height = resulsH
-		resizeRequest := &proto.ResizeRequest{
-			Id:     window.layerId,
-			Width:  window.width,
-			Height: window.height,
+func (window *WindowObject) EventHandler() {
+	defer func() {
+		if window.onClose != nil {
+			window.onClose()
 		}
-		window.app.sendRequest(resizeRequest)
-	}
-	window.lastW = translation.X
-	window.lastH = translation.Y
-}
-
-func (window *WindowObject) buildContent() {
-	// Move gesture
-	windowMoveGesture := DragGesture().OnChanged(func(value Value) {
-		window.moveWindow(value.translation)
-	}).OnEnded(func(value Value) {
-		window.lastX = 0
-		window.lastY = 0
-	})
-
-	shadowColor := Black
-	shadowColor.A = 127
-	shadowRect := Text("").MaxSize(Size{Infinite, Infinite}).Background(shadowColor).Foreground(shadowColor)
-
-	shadowLayer := VStack(
-		Spacer().MaxSize(Size{Infinite, 1}),
-		HStack(
-			Spacer().MaxSize(Size{2, Infinite}),
-			shadowRect,
-		),
-	)
-	resizeGesture := DragGesture().OnChanged(func(value Value) {
-		window.resizeWindow(value.translation)
-	}).OnEnded(func(value Value) {
-		window.lastW = 0
-		window.lastH = 0
-	})
-
-	window.titleText = Text(window.title).Foreground(White).Background(Grey).Align(Center).MaxSize(Size{Infinite, Infinite}).Gesture(windowMoveGesture)
-
-	windowFrame := VStack(
-		HStack(
-			Button("X", func(outlet *ButtonObject) {
-				window.Close()
-			}).Foreground(White).Background(Red),
-			Button("-", func(outlet *ButtonObject) {
-				// Todo
-			}).Foreground(Grey).Background(Yellow),
-			Button("+", func(outlet *ButtonObject) {
-				// Todo
-			}).Foreground(White).Background(Green),
-			window.titleText,
-		).MaxSize(Size{Infinite, 1}),
-		ZStack(
-			Text("").Background(White).Foreground(White).MaxSize(Size{Infinite, Infinite}),
-			window.body,
-			Box(Text("⇲").Background(White).Foreground(Black).Gesture(resizeGesture)).Gravity(Gravity{Right, Right}).MaxSize(Size{Infinite, Infinite}),
-		))
-
-	realLayer := VStack(
-		HStack(
-			windowFrame,
-			Spacer().MaxSize(Size{2, Infinite}),
-		),
-		Spacer().MaxSize(Size{Infinite, 1}),
-	)
-
-	// Window view
-	window.windowContainer = ZStack(shadowLayer, realLayer)
-	window.redraw()
-}
-
-func (window *WindowObject) redraw() {
-	var err error
-	window.staticCanvas, err = window.Render()
-	log.Fatal(err)
-	draw_request := &proto.DrawFillRequest{
-		Id:     window.layerId,
-		Width:  window.width,
-		Height: window.height,
-		Img:    window.staticCanvas,
-	}
-	window.app.sendRequest(draw_request)
-	render_request := &proto.RenderRequest{Id: window.layerId}
-	window.app.sendRequest(render_request)
-	window.activeAreas = make([]GestureDescriptor, 0)
-	window.activeAreas = append(window.activeAreas, window.windowContainer.GetChildrenGestures()...)
-}
-
-func (window *WindowObject) getGestureInPoint(x, y int) Gesture {
-	for i := len(window.activeAreas) - 1; i >= 0; i-- {
-		area := window.activeAreas[i]
-		if area.PointInArea(Point{x, y}) {
-			return area.Pointer
-		}
-	}
-	return nil
-}
-
-func (window *WindowObject) eventHandler() {
-	window.activeAreas = append(window.activeAreas, window.windowContainer.GetChildrenGestures()...)
+	}()
+	window.RegisterActiveAreas()
 	for {
+		if window.Events == nil {
+			log.Fatal("Events channel is nil")
+		}
 		select {
-		case event := <-window.events:
+		case event := <-window.Events:
 			switch event.Type {
 			case termbox.EventMouse:
-				x := event.MouseX
-				y := event.MouseY
+				mouseEvent := FromEventRequest(*event)
 				//Experimental!!!
-				var actor Gesture
-				if !window.prevMouse.isSameObject(event) {
-					actor = window.getGestureInPoint(x, y)
-				} else {
-					actor = window.prevMouse.actor
+				foundGesture := window.FindGesture(mouseEvent)
+				if window.CurrentGesture != foundGesture && foundGesture != nil {
+					window.CurrentGesture = foundGesture
 				}
-				window.prevMouse.save(event, actor)
 				// [Experimental]
-				if actor != nil {
-					actor.updating(event)
-					window.redraw()
+				if window.CurrentGesture != nil {
+					window.CurrentGesture.Update(event)
+					canvas, err := window.Render()
+					if err != nil {
+						log.Fatal("Failed to rerender on update", err)
+					}
+					window.SendRender(canvas)
+					window.Redraw()
+					if window.CurrentGesture.Ended() {
+						window.CurrentGesture = nil
+					}
 				}
 			case termbox.EventKey:
-				if *window.app.keyInputChan != nil {
-					*window.app.keyInputChan <- event
+				if *window.App.keyInputChan != nil {
+					*window.App.keyInputChan <- event
 				}
-				window.redraw()
 			}
-		case <-window.quit:
+		case <-window.Quit:
 			return
 		}
 	}
-}
-
-func (window *WindowObject) getLogicalSize() (int, int) {
-	return window.width, window.height
-}
-
-func (window *WindowObject) getActualSize() (int, int) {
-	return window.width, window.height
-}
-
-func (window *WindowObject) getPos() (int, int) {
-	return window.x, window.y
-}
-
-func (window *WindowObject) getGesture() Gesture {
-	return nil
-}
-
-func (window *WindowObject) hasGesture() bool {
-	return false
-}
-
-func (window *WindowObject) setPos(x, y int) {
-	window.x = x
-	window.y = y
-}
-
-func (window *WindowObject) Render() (Canvas, error) {
-	window.windowContainer.SetPosition(Point{0, 0})
-	return window.windowContainer.Render()
-}
-
-func Window(title string, body View) *WindowObject {
-	window := new(WindowObject)
-	window.x = 5
-	window.y = 5
-	window.width = 50
-	window.height = 18
-	window.title = title
-	window.body = body
-	window.events = make(chan *proto.EventRequest)
-	window.quit = make(chan int)
-	window.background = proto.Color{A: 255, R: 255, G: 255, B: 255}
-	window.activeAreas = make([]GestureDescriptor, 0)
-	window.onCloseFunc = func() {}
-	return window
 }
