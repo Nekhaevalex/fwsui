@@ -1,6 +1,6 @@
 module github.com/Nekhaevalex/fwsui
 
-go 1.20
+go 1.22
 
 require (
 	github.com/Nekhaevalex/fwsprotocol v0.0.2
