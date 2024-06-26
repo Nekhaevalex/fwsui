@@ -32,7 +32,7 @@ func (ac AbstractContainer) GetChildrenGestures() []ActiveArea {
 	for _, child := range ac.children {
 		// each child is view and implements HasGesture method.
 		if child.HasGesture() {
-			childDescriptor := child.GetGesture().GetGestureDescriptor(child)
+			childDescriptor := child.GetGesture().GetActiveArea(child)
 			childDescriptor.Position.Translate(Vector(ac.position))
 			descriptors = append(descriptors, childDescriptor)
 		}

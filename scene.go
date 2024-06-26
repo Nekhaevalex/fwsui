@@ -10,14 +10,14 @@ import (
 
 // Represents abstract scene object.
 type AbstractScene struct {
-	Position       Point
-	LayerID        proto.ID
-	App            *AppObject
-	Content        View
-	ActiveAreas    []ActiveArea
-	CurrentGesture Gesture
-	Events         chan *proto.EventRequest
-	Quit           chan int
+	Position       Point                    // Represents Scene frame global position
+	LayerID        proto.ID                 // Layer ID on window server
+	App            *AppObject               // Pointer to App object
+	Content        View                     // Scene contents pointer (via interface)
+	ActiveAreas    []ActiveArea             // Active areas storage
+	CurrentGesture Gesture                  // Current gesture pointer
+	Events         chan *proto.EventRequest // Incomming channel for events from WS
+	Quit           chan int                 // Channel for quit signal
 }
 
 func (scene *AbstractScene) BindApp(app *AppObject) {
@@ -104,7 +104,7 @@ func (scene *AbstractScene) RegisterActiveAreas() {
 	if ok {
 		scene.ActiveAreas = append(scene.ActiveAreas, container.GetChildrenGestures()...)
 	} else {
-		scene.ActiveAreas = append(scene.ActiveAreas, scene.Content.GetGesture().GetGestureDescriptor(scene.Content))
+		scene.ActiveAreas = append(scene.ActiveAreas, scene.Content.GetGesture().GetActiveArea(scene.Content))
 	}
 }
 
@@ -210,7 +210,7 @@ func Window(title string, content View) *WindowObject {
 		).
 			MaxSize(Size{Infinite, 1}),
 		ZStack(
-			Rectangle(Size{1, 1}),
+			Rectangle(Size{1, 2}),
 			window.content,
 			Box(
 				Text(">>>").
@@ -264,10 +264,30 @@ func (window *WindowObject) EventHandler() {
 		case event := <-window.Events:
 			switch event.Type {
 			case termbox.EventMouse:
+				// Event interference prevention!
+				// Here we should isolate current event from interfering with other events.
+
+				// First we retrieve received event as MouseEvent (simply for standartization)
 				mouseEvent := FromEventRequest(*event)
-				//Experimental!!!
+				// Next we retrieve gesture which is located on this position.
+				// Important: in fact it can be any event. Event is retrieved based on it's position.
+				// If we retrieved new event while our current event is not finished yet, event interference may happen.
+
+				// Actions to prevent event interference:
+				// 0. Check if current gesture is not nil. If nil then assign found gesture.
+				// 1. Check if found (retrieved) gesture is the same as current gesture, stored in Scene object.
+				//    If pointer are equal, no problem.
+				// 2. Check if found gestuire is nill. It means that event didn't trigger any other ActiveAreas.
+				// 3. If there is any gesture found which is not equal to current gesture
+				//    – check if current gesture ended and if yes - update current gesture.
 				foundGesture := window.FindGesture(mouseEvent)
-				if window.CurrentGesture != foundGesture && foundGesture != nil {
+				if window.CurrentGesture != nil {
+					if window.CurrentGesture != foundGesture && foundGesture != nil {
+						if window.CurrentGesture.Ended() {
+							window.CurrentGesture = foundGesture
+						}
+					}
+				} else {
 					window.CurrentGesture = foundGesture
 				}
 				// [Experimental]
