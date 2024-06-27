@@ -200,7 +200,8 @@ func Window(title string, content View) *WindowObject {
 		).
 			MaxSize(Size{Infinite, 1}),
 		ZStack(
-			Rectangle(Size{1, 2}),
+			Rectangle(Size{1, 12}).
+				Color(White),
 			window.content,
 			Box(
 				Text(">>>").

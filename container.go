@@ -62,9 +62,7 @@ func (ac AbstractContainer) FindGesture(me MouseEvent) Gesture {
 // Since each container should contain gravity variable (see AbstractContainer),
 // Container should implement setter and getter.
 //
-// Each of View in Container may contain Gesture. Thats why active areas of
-// gestures must be mapped for quick gesture position identification.
-// Hence container must implement GetChildrenGestures which recursively map gestures.
+// Each of View in Container may contain Gesture.
 type Container interface {
 	GetGravity() Gravity
 	SetGravity(gravity Gravity)
@@ -109,13 +107,13 @@ func (box *BoxObject) Render() (Canvas, error) {
 	// Solve child position
 	x := CoordinatesSolver(X, child.GetActualSize(), box.GetActualSize(), box.gravity.Horizontal)
 	y := CoordinatesSolver(Y, child.GetActualSize(), box.GetActualSize(), box.gravity.Vertical)
-	child.SetPosition(Point{x, y})
+	child.SetPosition(Point(Vector{x, y}.Add(Vector(box.GetPosition()))))
 	// Get child's rendered canvas
 	childCanvas, childError := child.Render()
 	if childError != nil {
 		return nil, childError
 	}
-	canvas.Inpaint(childCanvas, Vector(child.GetPosition()))
+	canvas.Inpaint(childCanvas, Vector{x, y})
 	return canvas, nil
 }
 
@@ -206,6 +204,10 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 		return nil, errors.Join(errors.New("AbstractStackObject was not able to create canvas (plane)"), error)
 	}
 
+	// Defining axis
+	longAxis := stack.axis
+	shortAxis := stack.axis.PlaneOrthogonal()
+
 	// Solve size constraints
 	// Retrieving size intervals
 	intervals := make([]SizeInterval, len(stack.children))
@@ -214,15 +216,15 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 	}
 	// Apply padding to actual size
 	actualSizeCopy := stack.GetActualSize()
-	newSizeAlongAxis := stack.actualSize.GetComponent(stack.axis) - uint(stack.padding)*uint(len(stack.children)-1)
-	actualSizeCopy.SetComponent(newSizeAlongAxis, stack.axis)
+	newSizeAlongAxis := stack.actualSize.GetComponent(longAxis) - uint(stack.padding)*uint(len(stack.children)-1)
+	actualSizeCopy.SetComponent(newSizeAlongAxis, longAxis)
 	// Solving stacked sizes
-	stackedSizes := KuruzovSolver(stack.axis, intervals, actualSizeCopy)
+	stackedSizes := KuruzovSolver(longAxis, intervals, actualSizeCopy)
 	// Solving parallel sizes
 	parallelSizes := make([]uint, len(stack.children))
 	var parallelSizeMax uint = 0
 	for i, child := range stack.children {
-		childSize := KuruzovSolver(stack.axis.PlaneOrthogonal(), []SizeInterval{child.GetSizeInterval()}, stack.GetActualSize())[0]
+		childSize := KuruzovSolver(shortAxis, []SizeInterval{child.GetSizeInterval()}, stack.GetActualSize())[0]
 		if i > 0 {
 			parallelSizeMax = max(parallelSizeMax, childSize)
 		} else {
@@ -236,24 +238,29 @@ func (stack *AbstractStackObject) renderPlaneStack() (Canvas, error) {
 	for i, child := range stack.children {
 		// Set resulted size
 		childActualSize := Size{0, 0}
-		childActualSize.SetComponent(stackedSizes[i], stack.axis)
-		childActualSize.SetComponent(parallelSizes[i], stack.axis.PlaneOrthogonal())
+		childActualSize.SetComponent(stackedSizes[i], longAxis)
+		childActualSize.SetComponent(parallelSizes[i], shortAxis)
 		child.SetActualSize(childActualSize)
 		childBoxSize := childActualSize
-		childBoxSize.SetComponent(parallelSizeMax, stack.axis.PlaneOrthogonal())
+		childBoxSize.SetComponent(parallelSizeMax, shortAxis)
 
 		// Set unshifted child position
-		x := CoordinatesSolver(stack.axis, childActualSize, childBoxSize, stack.GetGravity().GetComponent(stack.axis))
-		y := CoordinatesSolver(stack.axis.PlaneOrthogonal(), childActualSize, childBoxSize, stack.GetGravity().GetComponent(stack.axis.PlaneOrthogonal()))
+
+		x := CoordinatesSolver(longAxis, childActualSize, childBoxSize, stack.GetGravity().GetComponent(longAxis))
+		y := CoordinatesSolver(shortAxis, childActualSize, childBoxSize, stack.GetGravity().GetComponent(shortAxis))
 		unshiftedChildPos := Vector{0, 0}
-		unshiftedChildPos.SetComponent(x, stack.axis)
-		unshiftedChildPos.SetComponent(y, stack.axis.PlaneOrthogonal())
+		unshiftedChildPos.SetComponent(x, longAxis)
+		unshiftedChildPos.SetComponent(y, shortAxis)
 
 		translatedChildPos := translationVector.Add(unshiftedChildPos)
 
-		child.SetPosition(Point(translatedChildPos))
+		// Shift child with self position before render to prevent unshifted gestures
+		child.SetPosition(Point(Vector(Point(translatedChildPos)).Add(Vector(stack.GetPosition()))))
 
-		nextStartPos := translatedChildPos.Add(childActualSize.ToVector()).Add(paddingVector).Project(stack.axis)
+		nextStartPos := translatedChildPos.
+			Add(childActualSize.ToVector()).
+			Add(paddingVector).
+			Project(longAxis)
 		translationVector = nextStartPos
 
 		childCanvas, childError := child.Render()
@@ -272,6 +279,7 @@ func (stack *AbstractStackObject) renderZStack() (Canvas, error) {
 	}
 	for _, child := range stack.children {
 		boxed := Box(child)
+		boxed.SetPosition(stack.GetPosition())
 		boxed.SetActualSize(stack.GetActualSize())
 		boxed.SetGravity(stack.GetGravity())
 		layer, error := boxed.Render()
