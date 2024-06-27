@@ -610,7 +610,7 @@ type TextFieldObject struct {
 }
 
 func (textfield *TextFieldObject) enableInput() {
-	AppInstance().setInput(&textfield.input)
+	AppInstance().SetInput(&textfield.input)
 }
 
 func (textfield *TextFieldObject) insertString(s string) {

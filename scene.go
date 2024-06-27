@@ -1,6 +1,7 @@
 package fwsui
 
 import (
+	"context"
 	"errors"
 	"log"
 
@@ -8,37 +9,45 @@ import (
 	"github.com/nsf/termbox-go"
 )
 
+var (
+	ErrorSceneNoCancel  = errors.New("cancel function is nil")
+	ErrorSceneNotFound  = errors.New("scene not found in app")
+	ErrorSceneCloseFail = errors.New("scene failed to close")
+)
+
 // Represents abstract scene object.
+// Doesn't implement EventHandler hence doesn't implement Scene interface.
+// Needs additional EventHandler definition.
 type AbstractScene struct {
 	Position       Point                    // Represents Scene frame global position
 	LayerID        proto.ID                 // Layer ID on window server
-	App            *AppObject               // Pointer to App object
 	Content        View                     // Scene contents pointer (via interface)
 	CurrentGesture Gesture                  // Current gesture pointer
 	Events         chan *proto.EventRequest // Incomming channel for events from WS
-	Quit           chan int                 // Channel for quit signal
-}
-
-// Binds App object to Scene
-func (scene *AbstractScene) BindApp(app *AppObject) {
-	scene.App = app
-	log.Printf("Scene %v binded to app with pid %d\n", scene, app.pid)
+	cancel         context.CancelFunc       // Function for canceling EventHandler
 }
 
 // Requests Layer ID from window server
 func (scene *AbstractScene) RequestLayerID() proto.ID {
-	if scene.App == nil {
+	if AppInstance() == nil {
 		log.Fatal("AppObject pointer nil")
 	}
 	// Construct initial window creations request
-	new_window_request := &proto.NewWindowRequest{
-		Pid:    scene.App.pid,
+	newWindowRequest := &proto.NewWindowRequest{
+		Pid:    AppInstance().Pid,
 		X:      scene.Position.X,
 		Y:      scene.Position.Y,
 		Width:  int(scene.Content.GetActualSize().Width),
 		Height: int(scene.Content.GetActualSize().Height),
 	}
-	scene.LayerID = scene.App.sendRequest(new_window_request)
+	reply, err := AppInstance().SendRequest(newWindowRequest)
+	if err != nil {
+		newWindowReply, ok := reply.(*proto.ReplyCreationRequest)
+		if !ok {
+			log.Fatal("unknown messsge received: ", reply)
+		}
+		scene.LayerID = newWindowReply.Id
+	}
 	return scene.LayerID
 }
 
@@ -50,6 +59,89 @@ func (scene *AbstractScene) GetEventChannel() chan *proto.EventRequest {
 	return scene.Events
 }
 
+func (window *AbstractScene) EventHandler(ctx context.Context) {
+	for {
+		if window.Events == nil {
+			log.Fatal("Events channel is nil")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-window.Events:
+			switch event.Type {
+			case termbox.EventMouse:
+				// Event interference prevention!
+				// Here we should isolate current event from interfering with other events.
+
+				// First we retrieve received event as MouseEvent (simply for standartization)
+				mouseEvent := FromEventRequest(*event)
+				// Next we retrieve gesture which is located on this position.
+				// Important: in fact it can be any event. Event is retrieved based on it's position.
+				// If we retrieved new event while our current event is not finished yet, event interference may happen.
+
+				// Actions to prevent event interference:
+				// 0. Check if current gesture is not nil. If nil then assign found gesture.
+				// 1. Check if found (retrieved) gesture is the same as current gesture, stored in Scene object.
+				//    If pointer are equal, no problem.
+				// 2. Check if found gestuire is nill. It means that event didn't trigger any other Gestures.
+				// 3. If there is any gesture found which is not equal to current gesture
+				//    – check if current gesture ended and if yes - update current gesture.
+				foundGesture := window.FindGesture(mouseEvent)
+				if window.CurrentGesture != nil {
+					if window.CurrentGesture != foundGesture && foundGesture != nil {
+						if window.CurrentGesture.Ended() {
+							window.CurrentGesture = foundGesture
+						}
+					}
+				} else {
+					window.CurrentGesture = foundGesture
+				}
+				// [Experimental]
+				if window.CurrentGesture != nil {
+					window.CurrentGesture.Update(event)
+					canvas, err := window.Render()
+					if err != nil {
+						log.Fatal("Failed to rerender on update", err)
+					}
+					window.SendRender(canvas)
+					window.Redraw()
+					if window.CurrentGesture.Ended() {
+						window.CurrentGesture = nil
+					}
+				}
+			case termbox.EventKey:
+				if *AppInstance().keyInputChan != nil {
+					*AppInstance().keyInputChan <- event
+				}
+			}
+		}
+	}
+}
+
+func (scene *AbstractScene) Emit() {
+	ctx, cancel := context.WithCancel(context.Background())
+	scene.cancel = cancel
+	go scene.EventHandler(ctx)
+}
+
+func (scene *AbstractScene) Close() error {
+	if scene.cancel == nil {
+		return ErrorSceneNoCancel
+	}
+	scene.cancel()
+	if _, ok := AppInstance().Scenes[scene.LayerID]; ok {
+		delete(AppInstance().Scenes, scene.LayerID)
+	} else {
+		return ErrorSceneNotFound
+	}
+	deleteRequest := &proto.DeleteRequest{Id: scene.LayerID}
+	_, err := AppInstance().SendRequest(deleteRequest)
+	if err != nil {
+		return errors.Join(ErrorSceneCloseFail, err)
+	}
+	return nil
+}
+
 // Moves scene
 func (scene *AbstractScene) Move(translation Vector) {
 	moveRequest := &proto.MoveRequest{
@@ -58,29 +150,29 @@ func (scene *AbstractScene) Move(translation Vector) {
 		Y:  translation.Y,
 	}
 
-	scene.App.sendRequest(moveRequest)
+	AppInstance().SendRequest(moveRequest)
 	render := &proto.RenderRequest{Id: scene.LayerID}
-	scene.App.sendRequest(render)
+	AppInstance().SendRequest(render)
 	scene.Position.Translate(translation)
 }
 
 // Resizes scene
 func (scene *AbstractScene) Resize(size Size) {
-	if size.Width >= 10 && size.Height >= 3 {
+	if size.Width >= 15 && size.Height >= 5 {
 		scene.Content.SetActualSize(size)
 		resizeRequest := &proto.ResizeRequest{
 			Id:     scene.LayerID,
 			Width:  int(scene.Content.GetActualSize().Width),
 			Height: int(scene.Content.GetActualSize().Height),
 		}
-		scene.App.sendRequest(resizeRequest)
+		AppInstance().SendRequest(resizeRequest)
 		scene.Redraw()
 	}
 }
 
 func (scene AbstractScene) Redraw() {
 	render := &proto.RenderRequest{Id: scene.LayerID}
-	scene.App.sendRequest(render)
+	AppInstance().SendRequest(render)
 }
 
 func (scene AbstractScene) Render() (Canvas, error) {
@@ -98,7 +190,7 @@ func (scene AbstractScene) SendRender(canvas Canvas) {
 		Height: int(scene.Content.GetActualSize().Height),
 		Img:    canvas,
 	}
-	scene.App.sendRequest(draw_request)
+	AppInstance().SendRequest(draw_request)
 }
 
 // Returns top gesture available in this location
@@ -114,10 +206,11 @@ func (scene *AbstractScene) FindGesture(event MouseEvent) Gesture {
 // Unlike Container, Scene is not View
 // Scene communicates with window server
 type Scene interface {
-	BindApp(app *AppObject)                    // Method for saving pointer of App instance
 	RequestLayerID() proto.ID                  // Method for requesting new layer ID from Window Server
 	GetEventChannel() chan *proto.EventRequest // Method for returning events incomming connection
-	EventHandler()                             // Handler for incomming events
+	EventHandler(ctx context.Context)          // Handler for incomming events
+	Emit()
+	Close() error
 	// Typical canvas routines
 	Resize(size Size)         // Resize scene
 	Move(translation Vector)  // Move scene without render
@@ -171,10 +264,12 @@ func Window(title string, content View) *WindowObject {
 	window.Content = VStack(
 		HStack(
 			Button("X", func(outlet *ButtonObject) {
-				log.Printf("X detected")
-				if window.onClose != nil {
-					window.onClose()
-				}
+				go func() {
+					window.Close()
+					if window.onClose != nil {
+						window.onClose()
+					}
+				}()
 			}).
 				Foreground(White).
 				Background(Red),
@@ -217,13 +312,7 @@ func Window(title string, content View) *WindowObject {
 }
 
 func (window *WindowObject) OnClose(action func()) *WindowObject {
-	window.onClose = func() {
-		delete(window.App.scenes, window.LayerID)
-		delete_request := &proto.DeleteRequest{Id: window.LayerID}
-		window.App.sendRequest(delete_request)
-		action()
-		window.Quit <- 1
-	}
+	window.onClose = action
 	return window
 }
 
@@ -238,69 +327,4 @@ func (window *WindowObject) SetTitle(s string) *WindowObject {
 func (window *WindowObject) SetSize(size Size) *WindowObject {
 	window.Content.SetActualSize(size)
 	return window
-}
-
-func (window *WindowObject) EventHandler() {
-	defer func() {
-		if window.onClose != nil {
-			window.onClose()
-		}
-	}()
-
-	for {
-		if window.Events == nil {
-			log.Fatal("Events channel is nil")
-		}
-		select {
-		case event := <-window.Events:
-			switch event.Type {
-			case termbox.EventMouse:
-				// Event interference prevention!
-				// Here we should isolate current event from interfering with other events.
-
-				// First we retrieve received event as MouseEvent (simply for standartization)
-				mouseEvent := FromEventRequest(*event)
-				// Next we retrieve gesture which is located on this position.
-				// Important: in fact it can be any event. Event is retrieved based on it's position.
-				// If we retrieved new event while our current event is not finished yet, event interference may happen.
-
-				// Actions to prevent event interference:
-				// 0. Check if current gesture is not nil. If nil then assign found gesture.
-				// 1. Check if found (retrieved) gesture is the same as current gesture, stored in Scene object.
-				//    If pointer are equal, no problem.
-				// 2. Check if found gestuire is nill. It means that event didn't trigger any other Gestures.
-				// 3. If there is any gesture found which is not equal to current gesture
-				//    – check if current gesture ended and if yes - update current gesture.
-				foundGesture := window.FindGesture(mouseEvent)
-				if window.CurrentGesture != nil {
-					if window.CurrentGesture != foundGesture && foundGesture != nil {
-						if window.CurrentGesture.Ended() {
-							window.CurrentGesture = foundGesture
-						}
-					}
-				} else {
-					window.CurrentGesture = foundGesture
-				}
-				// [Experimental]
-				if window.CurrentGesture != nil {
-					window.CurrentGesture.Update(event)
-					canvas, err := window.Render()
-					if err != nil {
-						log.Fatal("Failed to rerender on update", err)
-					}
-					window.SendRender(canvas)
-					window.Redraw()
-					if window.CurrentGesture.Ended() {
-						window.CurrentGesture = nil
-					}
-				}
-			case termbox.EventKey:
-				if *window.App.keyInputChan != nil {
-					*window.App.keyInputChan <- event
-				}
-			}
-		case <-window.Quit:
-			return
-		}
-	}
 }
