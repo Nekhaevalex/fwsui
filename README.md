@@ -111,10 +111,10 @@ type View interface {
 	SetActualSize(size Size) // Sets AbstractView actual size
 
 	// Gesture methods
-	HasGesture() bool    // Returns true if view have gesture
-	GetGesture() Gesture // Returns view's gesture
+	HasGestures() bool    // Returns true if view have gesture
+	GetGestures() Gesture // Returns view's gesture
 
-	SetGesture(gesture Gesture) // Sets view's gesture
+	SetGestures(gesture Gesture) // Sets view's gesture
 
 	Render() (Canvas, error) // Renders view to canvas
 }

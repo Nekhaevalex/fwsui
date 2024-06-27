@@ -40,7 +40,7 @@ type AbstractView struct {
 	position     Point        // Represents abstract view position in parent's coordinates. Assigned by parent object. Default always (0, 0)
 	sizeInterval SizeInterval // Represents abstract view size interval
 	actualSize   Size         // Represents abstract view actual size that will be assigned at constraint solving stage
-	gesture      Gesture      // Gesture assigned to view
+	gestures     []Gesture    // Gesture assigned to view
 }
 
 // Returns AbstractView position
@@ -129,18 +129,35 @@ func (av *AbstractView) SetActualSize(size Size) {
 }
 
 // Returns true if View contains binded Gesture
-func (av AbstractView) HasGesture() bool {
-	return !(av.gesture == nil)
+func (av AbstractView) HasGestures() bool {
+	return !(av.gestures == nil) && len(av.gestures) > 0
 }
 
 // Returns AV's Gesture
-func (av AbstractView) GetGesture() Gesture {
-	return av.gesture
+func (av AbstractView) GetGestures() []Gesture {
+	return av.gestures
+}
+
+func (av AbstractView) FindGesture(me MouseEvent) Gesture {
+	if !av.HasGestures() {
+		return nil
+	}
+	if !av.GetFrame().IsInside(me.Position) {
+		return nil
+	}
+	for _, g := range av.gestures {
+		if g != nil {
+			if g.ButtonMatch(me) {
+				return g
+			}
+		}
+	}
+	return nil
 }
 
 // Adds new AV's Gesture
-func (av *AbstractView) SetGesture(gesture Gesture) {
-	av.gesture = gesture
+func (av *AbstractView) SetGestures(gesture ...Gesture) {
+	av.gestures = gesture
 }
 
 // Returns AV's Frame representation
@@ -154,7 +171,6 @@ func (av AbstractView) GetFrame() *Frame {
 /******************************************************************************/
 
 // View – interface for implementing UI elements that can be rendered in scene.
-// Requires Render method that returns proto.Cell matrix of the element.
 // Each view must implement those methods
 type View interface {
 	// Position methods
@@ -176,10 +192,10 @@ type View interface {
 	SetActualSize(size Size)                   // Sets AbstractView actual size
 
 	// Gesture methods
-	HasGesture() bool    // Returns true if view have gesture
-	GetGesture() Gesture // Returns view's gesture
-
-	SetGesture(gesture Gesture) // Sets view's gesture
+	HasGestures() bool                 // Returns true if view have gesture
+	GetGestures() []Gesture            // Returns view's gesture
+	FindGesture(me MouseEvent) Gesture // Returns Gesture which satisfies specified MouseEvent
+	SetGestures(gesture ...Gesture)    // Sets view's gesture
 
 	Render() (Canvas, error) // Renders view to canvas
 }
@@ -198,7 +214,7 @@ func Rectangle(size Size) *RectangleObject {
 	rect.SetPosition(Point{0, 0})
 	rect.SetMinSize(size)
 	rect.SetMaxSize(Size{Infinite, Infinite})
-	rect.SetGesture(nil)
+	rect.SetGestures(nil)
 	return rect
 }
 
@@ -419,9 +435,9 @@ func (to *TextObject) MaxSize(size Size) *TextObject {
 	return to
 }
 
-// Chained wrapper of SetGesture
-func (to *TextObject) Gesture(gesture Gesture) *TextObject {
-	to.SetGesture(gesture)
+// Chained wrapper of SetGestures
+func (to *TextObject) Gesture(gesture ...Gesture) *TextObject {
+	to.SetGestures(gesture...)
 	return to
 }
 
@@ -554,23 +570,26 @@ func Button(s string, action func(outlet *ButtonObject)) *ButtonObject {
 		button.background.B *= 2
 	}
 
-	buttonClickGesture := LClickGesture(1).OnChanged(func(inside bool) {
-		if inside {
-			buttonPressed()
-			button.pressed = true
-		} else {
+	buttonClickGesture := LClickGesture(1).
+		OnChanged(func(p Point) {
+			if button.GetFrame().IsInside(p) {
+				buttonPressed()
+				button.pressed = true
+			} else {
+				buttonUnpressed()
+				button.pressed = false
+			}
+		}).
+		OnEnded(func(p Point) {
+			if button.GetFrame().IsInside(p) {
+				action(button)
+			}
 			buttonUnpressed()
 			button.pressed = false
-		}
-	}).OnEnded(func(inside bool) {
-		if inside {
-			action(button)
-		}
-		buttonUnpressed()
-		button.pressed = false
-	})
+		})
 
-	button.Gesture(buttonClickGesture)
+	button.
+		Gesture(buttonClickGesture)
 
 	return button
 }
@@ -719,11 +738,11 @@ func TextField(text *string, prompt string) *TextFieldObject {
 	textfield.SetPosition(Point{0, 0})
 	textfield.SetMinSize(Size{1, 1})
 	textfield.SetMaxSize(Size{Infinite, 1})
-	textfield.SetGesture(nil)
+	textfield.SetGestures(nil)
 	textfield.active = false
 	textfield.onFinish = func() {}
 
-	selectGesture := DragGesture().OnChanged(func(value Value) {
+	selectGesture := DragGesture(termbox.MouseLeft).OnChanged(func(value Value) {
 		if !textfield.active {
 			textfield.active = true
 			textfield.activate()

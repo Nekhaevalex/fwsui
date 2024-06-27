@@ -17,31 +17,11 @@ import (
 // Since each container must implement View interface it is possible to store
 // containers inside containers.
 //
-// Note: AbstractContainer itself implements Container interface but not View.
+// Note: AbstractContainer itself implements both Container and View interfaces.
 type AbstractContainer struct {
 	AbstractView
 	gravity  Gravity
 	children []View
-}
-
-// Recursively gets GestureDescriptor of child view for mapping child elements gestures.
-// It is required for building map of active areas.
-func (ac AbstractContainer) GetChildrenGestures() []ActiveArea {
-	// allocating descriptor storage
-	descriptors := make([]ActiveArea, 0, 1)
-	for _, child := range ac.children {
-		// each child is view and implements HasGesture method.
-		if child.HasGesture() {
-			childDescriptor := child.GetGesture().GetActiveArea(child)
-			childDescriptor.Position.Translate(Vector(ac.position))
-			descriptors = append(descriptors, childDescriptor)
-		}
-		// Trying assert and if child is container - recursive call GetChildrenGestures
-		if asserted, ok := child.(Container); ok {
-			descriptors = append(descriptors, asserted.GetChildrenGestures()...)
-		}
-	}
-	return descriptors
 }
 
 // Sets gravity for AbstractContainer object
@@ -63,6 +43,19 @@ func (ac AbstractContainer) ApplyChildrenGravity() {
 	}
 }
 
+func (ac AbstractContainer) FindGesture(me MouseEvent) Gesture {
+	if !ac.GetFrame().IsInside(me.Position) {
+		return nil
+	}
+	for _, c := range ac.children {
+		g := c.FindGesture(me)
+		if g != nil {
+			return g
+		}
+	}
+	return nil
+}
+
 // Container - interface for implementing containers.
 // Each container must provide several methods.
 //
@@ -73,7 +66,6 @@ func (ac AbstractContainer) ApplyChildrenGravity() {
 // gestures must be mapped for quick gesture position identification.
 // Hence container must implement GetChildrenGestures which recursively map gestures.
 type Container interface {
-	GetChildrenGestures() []ActiveArea // Recursively gets GestureDescriptor of child view for mapping child elements gestures.
 	GetGravity() Gravity
 	SetGravity(gravity Gravity)
 	Render() (Canvas, error)
@@ -96,7 +88,7 @@ func Box(child View) *BoxObject {
 	box.SetPosition(Point{0, 0})
 	box.SetMinSize(Size{0, 0})
 	box.SetMaxSize(Size{Infinite, Infinite})
-	box.SetGesture(nil)
+	box.SetGestures(nil)
 	box.SetGravity(Gravity{Center, Center})
 	return box
 }
@@ -164,7 +156,7 @@ func AbstractStack(axis Axis, children ...View) *AbstractStackObject {
 	stack.SetPosition(Point{0, 0})
 	stack.SetMinSize(Size{0, 0})
 	stack.SetMaxSize(Size{Infinite, Infinite})
-	stack.SetGesture(nil)
+	stack.SetGestures(nil)
 	stack.SetGravity(Gravity{Center, Center})
 	stack.axis = axis
 	stack.padding = 0

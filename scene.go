@@ -14,17 +14,18 @@ type AbstractScene struct {
 	LayerID        proto.ID                 // Layer ID on window server
 	App            *AppObject               // Pointer to App object
 	Content        View                     // Scene contents pointer (via interface)
-	ActiveAreas    []ActiveArea             // Active areas storage
 	CurrentGesture Gesture                  // Current gesture pointer
 	Events         chan *proto.EventRequest // Incomming channel for events from WS
 	Quit           chan int                 // Channel for quit signal
 }
 
+// Binds App object to Scene
 func (scene *AbstractScene) BindApp(app *AppObject) {
 	scene.App = app
 	log.Printf("Scene %v binded to app with pid %d\n", scene, app.pid)
 }
 
+// Requests Layer ID from window server
 func (scene *AbstractScene) RequestLayerID() proto.ID {
 	if scene.App == nil {
 		log.Fatal("AppObject pointer nil")
@@ -41,6 +42,7 @@ func (scene *AbstractScene) RequestLayerID() proto.ID {
 	return scene.LayerID
 }
 
+// Returns event channel. If doesn't exists, allocates it
 func (scene *AbstractScene) GetEventChannel() chan *proto.EventRequest {
 	if scene.Events == nil {
 		scene.Events = make(chan *proto.EventRequest)
@@ -48,6 +50,7 @@ func (scene *AbstractScene) GetEventChannel() chan *proto.EventRequest {
 	return scene.Events
 }
 
+// Moves scene
 func (scene *AbstractScene) Move(translation Vector) {
 	moveRequest := &proto.MoveRequest{
 		Id: scene.LayerID,
@@ -61,6 +64,7 @@ func (scene *AbstractScene) Move(translation Vector) {
 	scene.Position.Translate(translation)
 }
 
+// Resizes scene
 func (scene *AbstractScene) Resize(size Size) {
 	if size.Width >= 10 && size.Height >= 3 {
 		scene.Content.SetActualSize(size)
@@ -71,7 +75,6 @@ func (scene *AbstractScene) Resize(size Size) {
 		}
 		scene.App.sendRequest(resizeRequest)
 		scene.Redraw()
-		scene.RegisterActiveAreas()
 	}
 }
 
@@ -98,26 +101,12 @@ func (scene AbstractScene) SendRender(canvas Canvas) {
 	scene.App.sendRequest(draw_request)
 }
 
-func (scene *AbstractScene) RegisterActiveAreas() {
-	scene.ActiveAreas = make([]ActiveArea, 0)
-	container, ok := scene.Content.(Container)
-	if ok {
-		scene.ActiveAreas = append(scene.ActiveAreas, container.GetChildrenGestures()...)
-	} else {
-		scene.ActiveAreas = append(scene.ActiveAreas, scene.Content.GetGesture().GetActiveArea(scene.Content))
-	}
-}
-
+// Returns top gesture available in this location
 func (scene *AbstractScene) FindGesture(event MouseEvent) Gesture {
-	if scene.ActiveAreas == nil {
-		log.Fatal("ActiveAreas is nil")
+	if scene.Content == nil {
+		return nil
 	}
-	for _, area := range scene.ActiveAreas {
-		if area.EventInArea(event) {
-			return area.Gesture
-		}
-	}
-	return nil
+	return scene.Content.FindGesture(event)
 }
 
 // Scene – interface for implementing multiple standalone objects that can be
@@ -135,7 +124,6 @@ type Scene interface {
 	Redraw()                  // Force rendraw scene without render
 	Render() (Canvas, error)  // Render scene
 	SendRender(canvas Canvas) // Send canvas to window server
-	RegisterActiveAreas()     // Builds ActiveAreas
 }
 
 type WindowObject struct {
@@ -155,13 +143,15 @@ func Window(title string, content View) *WindowObject {
 	window.content = content
 	// Building window
 	// Gestures
-	windowMoveGesture := DragGesture().OnChanged(func(value Value) {
-		window.Move(value.Translation.Sub(window.lastShift))
-		window.lastShift = value.Translation
-	}).OnEnded(func(value Value) {
-		window.lastShift = Vector{0, 0}
-	})
-	resizeGesture := DragGesture().OnChanged(func(value Value) {
+	windowMoveGesture := DragGesture(termbox.MouseLeft).
+		OnChanged(func(value Value) {
+			window.Move(value.Translation.Sub(window.lastShift))
+			window.lastShift = value.Translation
+		}).
+		OnEnded(func(value Value) {
+			window.lastShift = Vector{0, 0}
+		})
+	resizeGesture := DragGesture(termbox.MouseLeft).OnChanged(func(value Value) {
 		oldSize := window.Content.GetActualSize().ToVector()
 		shift := value.Translation.Sub(window.lastShift)
 		newActSize := oldSize.Add(shift).ToSize()
@@ -255,7 +245,7 @@ func (window *WindowObject) EventHandler() {
 			window.onClose()
 		}
 	}()
-	window.RegisterActiveAreas()
+
 	for {
 		if window.Events == nil {
 			log.Fatal("Events channel is nil")
@@ -277,7 +267,7 @@ func (window *WindowObject) EventHandler() {
 				// 0. Check if current gesture is not nil. If nil then assign found gesture.
 				// 1. Check if found (retrieved) gesture is the same as current gesture, stored in Scene object.
 				//    If pointer are equal, no problem.
-				// 2. Check if found gestuire is nill. It means that event didn't trigger any other ActiveAreas.
+				// 2. Check if found gestuire is nill. It means that event didn't trigger any other Gestures.
 				// 3. If there is any gesture found which is not equal to current gesture
 				//    – check if current gesture ended and if yes - update current gesture.
 				foundGesture := window.FindGesture(mouseEvent)

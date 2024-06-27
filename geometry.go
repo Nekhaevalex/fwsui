@@ -278,7 +278,7 @@ func (f Frame) GetSize() Size {
 
 // Sets size and returns object pointer
 func (f *Frame) SetSize(size Size) *Frame {
-	f.LowerRight = Point(Vector(f.UpperLeft).Add(size.ToVector()))
+	f.LowerRight = Point(Vector(f.UpperLeft).Add(size.ToVector()).Add(Vector{-1, -1}))
 	return f
 }
 
@@ -300,4 +300,9 @@ func (f Frame) Cut(with Frame) Frame {
 // Returns pair of 1D coordinates of start & end of frame
 func (f Frame) GetStartEnd(axis Axis) (int, int) {
 	return f.UpperLeft.GetComponent(axis), f.LowerRight.GetComponent(axis)
+}
+
+// Returns true if point is inside frame
+func (f Frame) IsInside(p Point) bool {
+	return f.UpperLeft.X <= p.X && f.UpperLeft.Y <= p.Y && f.LowerRight.X >= p.X && f.LowerRight.Y >= p.Y
 }

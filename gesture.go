@@ -24,23 +24,23 @@ func FromEventRequest(event proto.EventRequest) MouseEvent {
 	return MouseEvent{Point{event.MouseX, event.MouseY}, event.Key, true}
 }
 
-// ActiveArea represents clickable area
-type ActiveArea struct {
-	Position Point
-	Size     Size
-	Gesture  Gesture
-}
+// // ActiveArea represents clickable area
+// type ActiveArea struct {
+// 	Position Point
+// 	Size     Size
+// 	Gesture  Gesture
+// }
 
-// EventInArea returns true if provided MouseEvent position is inside specified
-// ActiveArea
-func (aa ActiveArea) EventInArea(event MouseEvent) bool {
-	if event.Position.X >= aa.Position.X && event.Position.Y >= aa.Position.Y {
-		if event.Position.X < (aa.Position.X+int(aa.Size.Width)) && event.Position.Y < (aa.Position.Y+int(aa.Size.Height)) {
-			return true
-		}
-	}
-	return false
-}
+// // EventInArea returns true if provided MouseEvent position is inside specified
+// // ActiveArea
+// func (aa ActiveArea) EventInArea(event MouseEvent) bool {
+// 	if event.Position.X >= aa.Position.X && event.Position.Y >= aa.Position.Y {
+// 		if event.Position.X < (aa.Position.X+int(aa.Size.Width)) && event.Position.Y < (aa.Position.Y+int(aa.Size.Height)) {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
 
 // Value represents single mouse gesture position desription:
 // start position, current position and translation vector of these two points
@@ -59,11 +59,11 @@ type Gesture interface {
 	ForceEnd()        // Force end gesture
 	InProgress() bool // Returns true if gesture started but not ended yet
 	// Services
-	GetActiveArea(view View) ActiveArea // Returns ActiveArea description
-	Update(event *proto.EventRequest)   // Called by owner every time new event happens
+	Update(event *proto.EventRequest) // Called by owner every time new event happens
 	// Callbacks
-	onChanged() // Called when new event of gesture happens
-	onEnded()   // Called when gesture ends
+	onChanged()                    // Called when new event of gesture happens
+	onEnded()                      // Called when gesture ends
+	ButtonMatch(m MouseEvent) bool // Returns true if MouseEvent button matches
 }
 
 // AbstractGesture represents abstract gesture with its basic attributes such as
@@ -72,6 +72,7 @@ type Gesture interface {
 // Should be used as a base for each complex gesture
 type AbstractGesture struct {
 	Start, End, Current        MouseEvent
+	Button                     termbox.Key
 	actionChanged, actionEnded func()
 }
 
@@ -93,16 +94,6 @@ func (ag *AbstractGesture) ForceEnd() {
 // Returns true if gesture started but not yet ended
 func (ag AbstractGesture) InProgress() bool {
 	return ag.Started() && !ag.Ended()
-}
-
-// Returns ActiveArea of specified gesture for provided view
-func (ag *AbstractGesture) GetActiveArea(view View) ActiveArea {
-	descriptor := ActiveArea{
-		Position: view.GetPosition(),
-		Size:     view.GetActualSize(),
-		Gesture:  ag,
-	}
-	return descriptor
 }
 
 func (ag AbstractGesture) onChanged() {
@@ -135,6 +126,10 @@ func (ag *AbstractGesture) Update(event *proto.EventRequest) {
 	}
 }
 
+func (ag *AbstractGesture) ButtonMatch(m MouseEvent) bool {
+	return ag.Button == m.Button
+}
+
 // Base gestures
 
 // Gesture which calls allows to implement action on drag movement
@@ -143,8 +138,9 @@ type DragGestureObject struct {
 }
 
 // Initializes new DragGestureObject
-func DragGesture() *DragGestureObject {
+func DragGesture(button termbox.Key) *DragGestureObject {
 	dragGesture := new(DragGestureObject)
+	dragGesture.Button = button
 	return dragGesture
 }
 
@@ -172,12 +168,10 @@ func (dg *DragGestureObject) OnEnded(action func(value Value)) *DragGestureObjec
 	return dg
 }
 
-// Implements abstract click gesture.
+// Implements abstract point click gesture.
 // Used for any mouse button click.
 type AClickGestureObject struct {
 	AbstractGesture
-	ActiveArea
-	Button       termbox.Key
 	Count        uint
 	clickCounter uint
 }
@@ -190,39 +184,23 @@ func AClickGesture(button termbox.Key, count uint) *AClickGestureObject {
 	return gesture
 }
 
-// Returns ActiveArea of specified gesture for provided view
-func (acg *AClickGestureObject) GetActiveArea(view View) ActiveArea {
-	acg.Position = view.GetPosition()
-	acg.Size = view.GetActualSize()
-	acg.Gesture = acg
-	return acg.ActiveArea
-}
-
 // Specifies callback to be called when gesture changed (mouse moved)
-func (acg *AClickGestureObject) OnChanged(action func(inside bool)) *AClickGestureObject {
+func (acg *AClickGestureObject) OnChanged(action func(p Point)) *AClickGestureObject {
 	acg.actionChanged = func() {
-		if acg.EventInArea(acg.Current) && acg.Current.Button == acg.Button {
-			action(true)
+		if acg.ButtonMatch(acg.Current) {
+			action(acg.Current.Position)
 		} else {
 			acg.clickCounter = 0
-			action(false)
+			action(acg.Current.Position)
 		}
 	}
 	return acg
 }
 
 // Specifies callback to be called when gesture ended (mouse button released)
-func (acg *AClickGestureObject) OnEnded(action func(inside bool)) *AClickGestureObject {
+func (acg *AClickGestureObject) OnEnded(action func(p Point)) *AClickGestureObject {
 	acg.actionEnded = func() {
-		if acg.EventInArea(acg.Current) {
-			acg.clickCounter++
-			if acg.clickCounter == acg.Count {
-				action(true)
-				acg.clickCounter = 0
-			}
-		} else {
-			action(false)
-		}
+		action(acg.End.Position)
 	}
 	return acg
 }
