@@ -23,7 +23,7 @@ var (
 	ErrorMessengerConnect         = errors.New("messenger failed to establish connection")                                // messenger failed to establish connection
 	ErrorMessengerShutDown        = errors.New("messenger failed to shutdown")                                            // messenger failed to shutdown
 	ErrorMessengerReceive         = errors.New("messenger failed to receive message")                                     // messenger failed to receive message
-	ErrorMessengerHandler         = errors.New("messenger's incomming messenge handler failed")                           // messenger's incomming messenge handler failed
+	ErrorMessengerHandler         = errors.New("messenger's incomming messege handler failed")                            // messenger's incomming messege handler failed
 	ErrorMessengerSend            = errors.New("messenger failed to send message")                                        // messenger failed to send message
 	ErrorMessengerForwardedClosed = errors.New("messenger failed to receive forwarded message because channel is closed") // messenger failed to receive forwarded message because channel is closed
 	ErrorMessengerTimeout         = errors.New("parallel receiver reached timeout")                                       // parallel receiver reached timeout
