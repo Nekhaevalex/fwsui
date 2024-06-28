@@ -287,6 +287,22 @@ type TextObject struct {
 	background proto.Color
 }
 
+// Creates text object. Text object is single string with attributes applied
+// to all string and ability to bind gesture.
+// Resulted object will contain provided string s with left alignment and empty
+// attributes.
+// Default position is (0, 0).
+// Default size is (length(s), 1)
+// No default gesture provided.
+func Text(s string) *TextObject {
+	text := new(TextObject)
+	text.text = s
+	text.align = Left
+	text.SetPosition(Point{0, 0})
+	text.SetSize(Size{uint(utf8.RuneCountInString(s)), 1})
+	return text
+}
+
 // Sets alignment of text
 func (text *TextObject) Align(a Align) *TextObject {
 	text.align = a
@@ -448,27 +464,21 @@ func (to *TextObject) SetText(s string) *TextObject {
 	return to
 }
 
-// Creates text object. Text object is single string with attributes applied
-// to all string and ability to bind gesture.
-// Resulted object will contain provided string s with left alignment and empty
-// attributes.
-// Default position is (0, 0).
-// Default size is (length(s), 1)
-// No default gesture provided.
-func Text(s string) *TextObject {
-	text := new(TextObject)
-	text.text = s
-	text.align = Left
-	text.SetPosition(Point{0, 0})
-	text.SetSize(Size{uint(utf8.RuneCountInString(s)), 1})
-	return text
-}
-
 /******************************************************************************/
 
 // Represents Spacer - transparent area for filling space between other views
 type SpacerObject struct {
 	AbstractView
+}
+
+// Creates Spacer.
+// By default can grow as big as possible so default max width/height is infinite,
+// default min width/height is 0. No default Gesture provided.
+func Spacer() *SpacerObject {
+	spacer := new(SpacerObject)
+	spacer.SetMinSize(Size{1, 1})
+	spacer.SetMaxSize(Size{Infinite, Infinite})
+	return spacer
 }
 
 func (spacer *SpacerObject) Render() (Canvas, error) {
@@ -501,16 +511,6 @@ func (so *SpacerObject) MinSize(size Size) *SpacerObject {
 func (so *SpacerObject) MaxSize(size Size) *SpacerObject {
 	so.SetMaxSize(size)
 	return so
-}
-
-// Creates Spacer.
-// By default can grow as big as possible so default max width/height is infinite,
-// default min width/height is 0. No default Gesture provided.
-func Spacer() *SpacerObject {
-	spacer := new(SpacerObject)
-	spacer.SetMinSize(Size{1, 1})
-	spacer.SetMaxSize(Size{Infinite, Infinite})
-	return spacer
 }
 
 /******************************************************************************/
@@ -599,18 +599,13 @@ func Button(s string, action func(outlet *ButtonObject)) *ButtonObject {
 // Provides TextField object. This is basic editable text field based on TextObject.
 type TextFieldObject struct {
 	AbstractView
+	AbstractKeyHandler
 	resultText  *string
-	input       chan *proto.EventRequest
 	prompt      string
-	active      bool
 	typeIndex   int
 	selectIndex int
 	onFinish    func()
 	label       TextObject
-}
-
-func (textfield *TextFieldObject) enableInput() {
-	AppInstance().SetInput(&textfield.input)
 }
 
 func (textfield *TextFieldObject) insertString(s string) {
@@ -648,17 +643,70 @@ func (textfield *TextFieldObject) deletePartOfString() {
 	}
 }
 
-func (textfield *TextFieldObject) handleEvent() {
-	for textfield.active {
-		event := <-textfield.input
+func (textfield *TextFieldObject) activate() {
+	textfield.Activate()
+	if utf8.RuneCountInString(*textfield.resultText) == 0 {
+		textfield.label.
+			Foreground(Black).
+			SetText("").
+			SetSize(Size{Infinite, 1})
+	}
+	textfield.typeIndex = 0
+	textfield.selectIndex = 0
+}
+
+func (textfield *TextFieldObject) updateLabelView() {
+	realWidth, _ := textfield.label.
+		GetActualSize().
+		Unpack()
+	if utf8.RuneCountInString(*textfield.resultText) > int(realWidth) {
+		runeForm := []rune(*textfield.resultText)[realWidth:]
+		textfield.label.
+			SetText(string(runeForm)).
+			SetSize(Size{Infinite, 1})
+	} else {
+		textfield.label.
+			SetText(*textfield.resultText).
+			SetSize(Size{Infinite, 1})
+	}
+}
+
+func (textfield *TextFieldObject) deactivate() {
+	textfield.Deactivate()
+	if utf8.RuneCountInString(*textfield.resultText) == 0 {
+		textfield.label.
+			SetText(textfield.prompt).
+			Foreground(Grey).
+			SetSize(Size{Infinite, 1})
+	}
+}
+
+func (textfield *TextFieldObject) OnFinish(action func()) *TextFieldObject {
+	textfield.onFinish = action
+	return textfield
+}
+
+func TextField(text *string, prompt string) *TextFieldObject {
+	textfield := new(TextFieldObject)
+	textfield.label.Background(LightGrey)
+	textfield.label.Foreground(Grey)
+	textfield.label.SetText(prompt)
+	textfield.prompt = prompt
+	textfield.resultText = text
+	textfield.label.align = Left
+	textfield.SetPosition(Point{0, 0})
+	textfield.SetMinSize(Size{1, 1})
+	textfield.SetMaxSize(Size{Infinite, 1})
+	textfield.SetGestures(nil)
+	textfield.onFinish = func() {}
+
+	textfield.SetKeyHandler(func(event proto.EventRequest) {
 		if event.Ch == 0 {
 			switch event.Key {
 			case termbox.KeyEnter:
-				textfield.active = false
 				textfield.deactivate()
 				textfield.onFinish()
 			case termbox.KeyEsc:
-				textfield.active = false
 				textfield.deactivate()
 			case termbox.KeySpace:
 				textfield.insertString(" ")
@@ -691,63 +739,11 @@ func (textfield *TextFieldObject) handleEvent() {
 			textfield.insertString(string(event.Ch))
 			textfield.updateLabelView()
 		}
-	}
-}
-
-func (textfield *TextFieldObject) activate() {
-	textfield.active = true
-	if utf8.RuneCountInString(*textfield.resultText) == 0 {
-		textfield.label.Foreground(Black).SetText("").SetSize(Size{Infinite, 1})
-	}
-	textfield.typeIndex = 0
-	textfield.selectIndex = 0
-	go textfield.handleEvent()
-}
-
-func (textfield *TextFieldObject) updateLabelView() {
-	realWidth, _ := textfield.label.GetActualSize().Unpack()
-	if utf8.RuneCountInString(*textfield.resultText) > int(realWidth) {
-		runeForm := []rune(*textfield.resultText)[realWidth:]
-		textfield.label.SetText(string(runeForm)).SetSize(Size{Infinite, 1})
-	} else {
-		textfield.label.SetText(*textfield.resultText).SetSize(Size{Infinite, 1})
-	}
-}
-
-func (textfield *TextFieldObject) deactivate() {
-	textfield.active = false
-	if utf8.RuneCountInString(*textfield.resultText) == 0 {
-		textfield.label.SetText(textfield.prompt).Foreground(Grey).SetSize(Size{Infinite, 1})
-	}
-}
-
-func (textfield *TextFieldObject) OnFinish(action func()) *TextFieldObject {
-	textfield.onFinish = action
-	return textfield
-}
-
-func TextField(text *string, prompt string) *TextFieldObject {
-	textfield := new(TextFieldObject)
-	textfield.input = make(chan *proto.EventRequest)
-	textfield.label.Background(LightGrey)
-	textfield.label.Foreground(Grey)
-	textfield.label.SetText(prompt)
-	textfield.prompt = prompt
-	textfield.resultText = text
-	textfield.label.align = Left
-	textfield.SetPosition(Point{0, 0})
-	textfield.SetMinSize(Size{1, 1})
-	textfield.SetMaxSize(Size{Infinite, 1})
-	textfield.SetGestures(nil)
-	textfield.active = false
-	textfield.onFinish = func() {}
+	})
 
 	selectGesture := DragGesture(termbox.MouseLeft).OnChanged(func(value Value) {
-		if !textfield.active {
-			textfield.active = true
+		if !textfield.IsActive() {
 			textfield.activate()
-			textfield.enableInput()
-			go textfield.handleEvent()
 		}
 		sel1 := min(max(0, value.StartPosition.X-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
 		sel2 := min(max(0, value.StartPosition.Y-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
@@ -765,7 +761,7 @@ func (textfield *TextFieldObject) Render() (Canvas, error) {
 	if err != nil {
 		return nil, errors.Join(errors.New("TextFieldObject was not able to create canvas (plane)"), err)
 	}
-	if textfield.active {
+	if textfield.IsActive() {
 		if textfield.typeIndex != textfield.selectIndex {
 			for i := textfield.typeIndex; i < textfield.selectIndex; i++ {
 				renderedView[i][0].Bg = Blue
