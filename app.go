@@ -24,6 +24,7 @@ var (
 	ErrorMessengerShutDown        = errors.New("messenger failed to shutdown")                                            // messenger failed to shutdown
 	ErrorMessengerReceive         = errors.New("messenger failed to receive message")                                     // messenger failed to receive message
 	ErrorMessengerHandler         = errors.New("messenger's incomming messege handler failed")                            // messenger's incomming messege handler failed
+	ErrorMessengerRoute           = errors.New("messenger failed to reroute incomming message")                           // messenger's incomming messege handler failed
 	ErrorMessengerSend            = errors.New("messenger failed to send message")                                        // messenger failed to send message
 	ErrorMessengerForwardedClosed = errors.New("messenger failed to receive forwarded message because channel is closed") // messenger failed to receive forwarded message because channel is closed
 	ErrorMessengerTimeout         = errors.New("parallel receiver reached timeout")                                       // parallel receiver reached timeout
@@ -95,7 +96,7 @@ func (m *Messenger) ShutDown() error {
 	return ErrorMessengerNoCancel
 }
 
-// incomingMessagesHandler - handler which catches all incomming messages from window server.
+// handleIncommingMessages - handler which catches all incomming messages from window server.
 // It's quite important that it catches ALL messages including those which are awaited by SendRequest.
 // Hopefully it will forward them to SendRequest.
 func (m *Messenger) handleIncommingMessages(ctx context.Context, route func(*proto.EventRequest) error) {
@@ -119,7 +120,7 @@ func (m *Messenger) handleIncommingMessages(ctx context.Context, route func(*pro
 				go func() {
 					err := route(tRequest)
 					if err != nil {
-						log.Fatal(errors.Join(ErrorMessengerHandler, err))
+						log.Fatal(errors.Join(ErrorMessengerRoute, err))
 					}
 				}()
 			default:
@@ -211,12 +212,12 @@ func NewMessenger(network, address string, pid int, route func(*proto.EventReque
 // As a result you can call AppInstance() function which always returns pointer to
 // current AppObject.
 type AppObject struct {
-	Pid          int                // Stores process ID
-	Scenes       map[proto.ID]Scene // Child Scenes storage
-	messenger    *Messenger         // Messenger structure for communicating with FWS
-	keyInputChan *chan *proto.EventRequest
-	ctx          context.Context    // App context
-	cancel       context.CancelFunc // App context cancel
+	Pid          int                       // Stores process ID
+	Scenes       map[proto.ID]Scene        // Child Scenes storage
+	messenger    *Messenger                // Messenger structure for communicating with FWS
+	keyInputChan *chan *proto.EventRequest //
+	ctx          context.Context           // App context
+	cancel       context.CancelFunc        // App context cancel
 }
 
 // AppObject instance. Only one allowed per process.

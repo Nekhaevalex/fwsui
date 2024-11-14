@@ -20,11 +20,16 @@ package main
 import "github.com/Nekhaevalex/fwsui"
 
 func main() {
-    App(
-        Window("Hello, World!", Text("Hello, World!")).OnClose(func() {
-	    	AppInstance().Quit()
-	    }),
-    )
+    ui.App(
+		ui.Window(
+			"Hello, World!",
+			ui.Text("Hello, World!")).
+			OnClose(func() {
+				ui.AppInstance().
+					Quit()
+			},
+			),
+	)
 }
 ```
 

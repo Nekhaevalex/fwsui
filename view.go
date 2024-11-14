@@ -79,6 +79,12 @@ func (av AbstractView) IsFixedSize() bool {
 
 // Sets AbstractView exact size (MinSize = MaxSize = size)
 func (av *AbstractView) SetSize(size Size) {
+	if size.Width == 0 {
+		size.Width = 1
+	}
+	if size.Height == 0 {
+		size.Height = 1
+	}
 	av.sizeInterval.Min = size
 	av.sizeInterval.Max = size
 }
@@ -125,7 +131,7 @@ func (av *AbstractView) SetActualSize(size Size) {
 			av.GetMaxSize().GetComponent(axis),
 		)
 	}
-	av.actualSize = Size{assignSizeAxis(X), assignSizeAxis(Y)}
+	av.actualSize = Size{max(1, assignSizeAxis(X)), max(1, assignSizeAxis(Y))}
 }
 
 // Returns true if View contains binded Gesture
@@ -581,11 +587,11 @@ func Button(s string, action func(outlet *ButtonObject)) *ButtonObject {
 			}
 		}).
 		OnEnded(func(p Point) {
+			buttonUnpressed()
+			button.pressed = false
 			if button.GetFrame().IsInside(p) {
 				action(button)
 			}
-			buttonUnpressed()
-			button.pressed = false
 		})
 
 	button.
@@ -597,7 +603,7 @@ func Button(s string, action func(outlet *ButtonObject)) *ButtonObject {
 /******************************************************************************/
 
 // Provides TextField object. This is basic editable text field based on TextObject.
-type TextFieldObject struct {
+type TextBoxObject struct {
 	AbstractView
 	AbstractKeyHandler
 	resultText  *string
@@ -606,194 +612,4 @@ type TextFieldObject struct {
 	selectIndex int
 	onFinish    func()
 	label       TextObject
-}
-
-func (textfield *TextFieldObject) insertString(s string) {
-	leftI := textfield.typeIndex
-	rightI := textfield.selectIndex
-	runeForm := []rune(*textfield.resultText)
-	newRuneForm := append(append(runeForm[:leftI], []rune(s)...), runeForm[rightI:]...)
-	*textfield.resultText = string(newRuneForm)
-	textfield.typeIndex += utf8.RuneCountInString(s)
-	textfield.selectIndex = textfield.typeIndex
-}
-
-func (textfield *TextFieldObject) deletePartOfString() {
-	leftI := textfield.typeIndex
-	rightI := textfield.selectIndex
-	if leftI != rightI {
-		runeForm := []rune(*textfield.resultText)
-		newRuneForm := append(runeForm[:leftI], runeForm[rightI:]...)
-		*textfield.resultText = string(newRuneForm)
-		if textfield.typeIndex > 0 {
-			textfield.typeIndex -= 1
-		} else {
-			textfield.typeIndex = 0
-		}
-		textfield.selectIndex = textfield.typeIndex
-	} else {
-		if leftI == 0 {
-			return
-		}
-		runeForm := []rune(*textfield.resultText)
-		newRuneForm := append(runeForm[:leftI-1], runeForm[leftI:]...)
-		*textfield.resultText = string(newRuneForm)
-		textfield.typeIndex -= 1
-		textfield.selectIndex = textfield.typeIndex
-	}
-}
-
-func (textfield *TextFieldObject) activate() {
-	textfield.Activate()
-	if utf8.RuneCountInString(*textfield.resultText) == 0 {
-		textfield.label.
-			Foreground(Black).
-			SetText("").
-			SetSize(Size{Infinite, 1})
-	}
-	textfield.typeIndex = 0
-	textfield.selectIndex = 0
-}
-
-func (textfield *TextFieldObject) updateLabelView() {
-	realWidth, _ := textfield.label.
-		GetActualSize().
-		Unpack()
-	if utf8.RuneCountInString(*textfield.resultText) > int(realWidth) {
-		runeForm := []rune(*textfield.resultText)[realWidth:]
-		textfield.label.
-			SetText(string(runeForm)).
-			SetSize(Size{Infinite, 1})
-	} else {
-		textfield.label.
-			SetText(*textfield.resultText).
-			SetSize(Size{Infinite, 1})
-	}
-}
-
-func (textfield *TextFieldObject) deactivate() {
-	textfield.Deactivate()
-	if utf8.RuneCountInString(*textfield.resultText) == 0 {
-		textfield.label.
-			SetText(textfield.prompt).
-			Foreground(Grey).
-			SetSize(Size{Infinite, 1})
-	}
-}
-
-func (textfield *TextFieldObject) OnFinish(action func()) *TextFieldObject {
-	textfield.onFinish = action
-	return textfield
-}
-
-func TextField(text *string, prompt string) *TextFieldObject {
-	textfield := new(TextFieldObject)
-	textfield.label.Background(LightGrey)
-	textfield.label.Foreground(Grey)
-	textfield.label.SetText(prompt)
-	textfield.prompt = prompt
-	textfield.resultText = text
-	textfield.label.align = Left
-	textfield.SetPosition(Point{0, 0})
-	textfield.SetMinSize(Size{1, 1})
-	textfield.SetMaxSize(Size{Infinite, 1})
-	textfield.SetGestures(nil)
-	textfield.onFinish = func() {}
-
-	textfield.SetKeyHandler(func(event proto.EventRequest) {
-		if event.Ch == 0 {
-			switch event.Key {
-			case termbox.KeyEnter:
-				textfield.deactivate()
-				textfield.onFinish()
-			case termbox.KeyEsc:
-				textfield.deactivate()
-			case termbox.KeySpace:
-				textfield.insertString(" ")
-				textfield.label.SetText(*textfield.resultText).SetSize(Size{Infinite, 1})
-			case termbox.KeyArrowLeft:
-				if event.Mod != termbox.ModAlt {
-					if textfield.selectIndex > 0 {
-						textfield.selectIndex -= 1
-					}
-				} else {
-					if textfield.typeIndex > 0 {
-						textfield.typeIndex -= 1
-					}
-				}
-			case termbox.KeyArrowRight:
-				if event.Mod != termbox.ModAlt {
-					if textfield.selectIndex < utf8.RuneCountInString(*textfield.resultText) {
-						textfield.selectIndex += 1
-					}
-				} else {
-					if textfield.typeIndex < utf8.RuneCountInString(*textfield.resultText) {
-						textfield.typeIndex += 1
-					}
-				}
-			case termbox.KeyBackspace, termbox.KeyBackspace2:
-				textfield.deletePartOfString()
-				textfield.updateLabelView()
-			}
-		} else {
-			textfield.insertString(string(event.Ch))
-			textfield.updateLabelView()
-		}
-	})
-
-	selectGesture := DragGesture(termbox.MouseLeft).OnChanged(func(value Value) {
-		if !textfield.IsActive() {
-			textfield.activate()
-		}
-		sel1 := min(max(0, value.StartPosition.X-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
-		sel2 := min(max(0, value.StartPosition.Y-textfield.label.GetPosition().X), utf8.RuneCountInString(*textfield.resultText))
-		textfield.typeIndex = min(sel1, sel2)
-		textfield.selectIndex = max(sel1, sel2)
-	}).OnEnded(func(value Value) {
-
-	})
-	textfield.label.Gesture(selectGesture)
-	return textfield
-}
-
-func (textfield *TextFieldObject) Render() (Canvas, error) {
-	renderedView, err := textfield.label.Render()
-	if err != nil {
-		return nil, errors.Join(errors.New("TextFieldObject was not able to create canvas (plane)"), err)
-	}
-	if textfield.IsActive() {
-		if textfield.typeIndex != textfield.selectIndex {
-			for i := textfield.typeIndex; i < textfield.selectIndex; i++ {
-				renderedView[i][0].Bg = Blue
-				renderedView[i][0].Fg = White
-			}
-		} else {
-			renderedView[textfield.typeIndex][0].Ch = []rune("|")[0]
-		}
-	}
-	return renderedView, nil
-}
-
-// Chained wrapper of SetPosition
-func (tfo *TextFieldObject) Position(position Point) *TextFieldObject {
-	tfo.SetPosition(position)
-	return tfo
-}
-
-// Chained wrapper of SetSize
-func (tfo *TextFieldObject) Size(size Size) *TextFieldObject {
-	tfo.SetSize(size)
-	return tfo
-}
-
-// Chained wrapper of SetMinSize
-func (tfo *TextFieldObject) MinSize(size Size) *TextFieldObject {
-	tfo.SetMinSize(size)
-	return tfo
-}
-
-// Chained wrapper of SetMaxSize
-func (tfo *TextFieldObject) MaxSize(size Size) *TextFieldObject {
-	tfo.SetMaxSize(size)
-	return tfo
 }

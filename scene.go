@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sync"
 
 	proto "github.com/Nekhaevalex/fwsprotocol"
 	"github.com/nsf/termbox-go"
@@ -25,6 +26,7 @@ type AbstractScene struct {
 	CurrentGesture Gesture                  // Current gesture pointer
 	Events         chan *proto.EventRequest // Incomming channel for events from WS
 	cancel         context.CancelFunc       // Function for canceling EventHandler
+	once           sync.Once                // One time closer
 }
 
 // Requests Layer ID from window server
@@ -42,12 +44,13 @@ func (scene *AbstractScene) RequestLayerID() proto.ID {
 	}
 	reply, err := AppInstance().SendRequest(newWindowRequest)
 	if err != nil {
-		newWindowReply, ok := reply.(*proto.ReplyCreationRequest)
-		if !ok {
-			log.Fatal("unknown messsge received: ", reply)
-		}
-		scene.LayerID = newWindowReply.Id
+		log.Fatal(err)
 	}
+	newWindowReply, ok := reply.(*proto.ReplyCreationRequest)
+	if !ok {
+		log.Fatal("unknown messsge received: ", reply)
+	}
+	scene.LayerID = newWindowReply.Id
 	return scene.LayerID
 }
 
@@ -125,21 +128,27 @@ func (scene *AbstractScene) Emit() {
 }
 
 func (scene *AbstractScene) Close() error {
-	if scene.cancel == nil {
-		return ErrorSceneNoCancel
-	}
-	scene.cancel()
-	if _, ok := AppInstance().Scenes[scene.LayerID]; ok {
-		delete(AppInstance().Scenes, scene.LayerID)
-	} else {
-		return ErrorSceneNotFound
-	}
-	deleteRequest := &proto.DeleteRequest{Id: scene.LayerID}
-	_, err := AppInstance().SendRequest(deleteRequest)
-	if err != nil {
-		return errors.Join(ErrorSceneCloseFail, err)
-	}
-	return nil
+	var gerr error
+	scene.once.Do(func() {
+		if scene.cancel == nil {
+			gerr = ErrorSceneNoCancel
+			return
+		}
+		scene.cancel()
+		if _, ok := AppInstance().Scenes[scene.LayerID]; ok {
+			delete(AppInstance().Scenes, scene.LayerID)
+		} else {
+			gerr = ErrorSceneNotFound
+			return
+		}
+		deleteRequest := &proto.DeleteRequest{Id: scene.LayerID}
+		_, err := AppInstance().SendRequest(deleteRequest)
+		if err != nil {
+			gerr = errors.Join(ErrorSceneCloseFail, err)
+		}
+		gerr = nil
+	})
+	return gerr
 }
 
 // Moves scene
@@ -170,12 +179,12 @@ func (scene *AbstractScene) Resize(size Size) {
 	}
 }
 
-func (scene AbstractScene) Redraw() {
+func (scene *AbstractScene) Redraw() {
 	render := &proto.RenderRequest{Id: scene.LayerID}
 	AppInstance().SendRequest(render)
 }
 
-func (scene AbstractScene) Render() (Canvas, error) {
+func (scene *AbstractScene) Render() (Canvas, error) {
 	canvas, err := scene.Content.Render()
 	if err != nil {
 		return nil, errors.Join(errors.New("AbstractScene was not able to render content"), err)
@@ -183,7 +192,7 @@ func (scene AbstractScene) Render() (Canvas, error) {
 	return canvas, err
 }
 
-func (scene AbstractScene) SendRender(canvas Canvas) {
+func (scene *AbstractScene) SendRender(canvas Canvas) {
 	draw_request := &proto.DrawFillRequest{
 		Id:     scene.LayerID,
 		Width:  int(scene.Content.GetActualSize().Width),
@@ -264,12 +273,10 @@ func Window(title string, content View) *WindowObject {
 	window.Content = VStack(
 		HStack(
 			Button("X", func(outlet *ButtonObject) {
-				go func() {
-					window.Close()
-					if window.onClose != nil {
-						window.onClose()
-					}
-				}()
+				if window.onClose != nil {
+					window.onClose()
+				}
+				window.Close()
 			}).
 				Foreground(White).
 				Background(Red),
